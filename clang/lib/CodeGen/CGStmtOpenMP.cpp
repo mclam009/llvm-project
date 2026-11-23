@@ -4146,6 +4146,15 @@ static void emitScanBasedDirectiveFinals(
     CopyArrayElems.append(C->copy_array_elems().begin(),
                           C->copy_array_elems().end());
   }
+  // Without iterations there is no last element, and the original variables
+  // keep their values.
+  llvm::BasicBlock *CopyBB = CGF.createBasicBlock("omp.scan.finals.copy");
+  llvm::BasicBlock *DoneBB = CGF.createBasicBlock("omp.scan.finals.done");
+  CGF.Builder.CreateCondBr(
+      CGF.Builder.CreateICmpNE(OMPScanNumIterations,
+                               llvm::ConstantInt::get(CGF.SizeTy, 0)),
+      CopyBB, DoneBB);
+  CGF.EmitBlock(CopyBB);
   // Create temp var and copy LHS value to this temp value.
   // LHS = TMP[LastIter];
   llvm::Value *OMPLast = CGF.Builder.CreateNSWSub(
@@ -4167,6 +4176,7 @@ static void emitScanBasedDirectiveFinals(
         cast<VarDecl>(cast<DeclRefExpr>(LHSs[I])->getDecl()),
         cast<VarDecl>(cast<DeclRefExpr>(RHSs[I])->getDecl()), CopyOps[I]);
   }
+  CGF.EmitBlock(DoneBB);
 }
 
 /// Emits the code for the directive with inscan reductions.
