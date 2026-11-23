@@ -53,13 +53,19 @@ getEffectiveDirectiveKind(const OMPExecutableDirective &S);
 /// Whether a combined `distribute parallel for` may use the fused
 /// distr_static_chunk + static_chunkone schedule (enum 93): one
 /// for_static_init, no surrounding distribute_static_init.
+static bool distributeSharesLoopBounds(const OMPLoopDirective &S);
+
 static bool canEmitGPUFusedDistSchedule(const CodeGenModule &CGM,
                                         const OMPLoopDirective &S,
                                         OpenMPDirectiveKind DKind) {
   // Reduction-only for now. Non-reduction cases might follow in the future, but
   // need more analysis for maximum profit.
+  // The fused schedule leaves the iteration space to an inner worksharing loop, so it needs a real combined
+  // 'distribute parallel for'; a 'teams loop' emitted as a plain 'distribute' has none and would run one iteration
+  // (omp-examples patch, docs/bug-reports/clang-23.1.6-teams-loop-distribute.patch).
   return CGM.getLangOpts().OpenMPIsTargetDevice && CGM.getTriple().isGPU() &&
          isOpenMPLoopBoundSharingDirective(DKind) &&
+         distributeSharesLoopBounds(S) &&
          S.hasClausesOfKind<OMPReductionClause>() &&
          !S.getSingleClause<OMPDistScheduleClause>() &&
          !S.getSingleClause<OMPScheduleClause>() &&
@@ -3548,6 +3554,8 @@ void CodeGenFunction::EmitOMPForOuterLoop(
 static void emitEmptyOrdered(CodeGenFunction &, SourceLocation Loc,
                              const unsigned IVSize, const bool IVSigned) {}
 
+static bool distributeSharesLoopBounds(const OMPLoopDirective &S);
+
 void CodeGenFunction::EmitOMPDistributeOuterLoop(
     OpenMPDistScheduleClauseKind ScheduleKind, const OMPLoopDirective &S,
     OMPPrivateScope &LoopScope, const OMPLoopArguments &LoopArgs,
@@ -3563,7 +3571,6 @@ void CodeGenFunction::EmitOMPDistributeOuterLoop(
   const Expr *IVExpr = S.getIterationVariable();
   const unsigned IVSize = getContext().getTypeSize(IVExpr->getType());
   const bool IVSigned = IVExpr->getType()->hasSignedIntegerRepresentation();
-  OpenMPDirectiveKind EKind = getEffectiveDirectiveKind(S);
 
   CGOpenMPRuntime::StaticRTInput StaticInit(
       IVSize, IVSigned, /* Ordered = */ false, LoopArgs.IL, LoopArgs.LB,
@@ -3573,7 +3580,7 @@ void CodeGenFunction::EmitOMPDistributeOuterLoop(
   // for combined 'distribute' and 'for' the increment expression of distribute
   // is stored in DistInc. For 'distribute' alone, it is in Inc.
   Expr *IncExpr;
-  if (isOpenMPLoopBoundSharingDirective(EKind))
+  if (distributeSharesLoopBounds(S))
     IncExpr = S.getDistInc();
   else
     IncExpr = S.getInc();
@@ -3587,20 +3594,18 @@ void CodeGenFunction::EmitOMPDistributeOuterLoop(
   OuterLoopArgs.ST = LoopArgs.ST;
   OuterLoopArgs.IL = LoopArgs.IL;
   OuterLoopArgs.Chunk = LoopArgs.Chunk;
-  OuterLoopArgs.EUB = isOpenMPLoopBoundSharingDirective(EKind)
+  OuterLoopArgs.EUB = distributeSharesLoopBounds(S)
                           ? S.getCombinedEnsureUpperBound()
                           : S.getEnsureUpperBound();
   OuterLoopArgs.IncExpr = IncExpr;
-  OuterLoopArgs.Init = isOpenMPLoopBoundSharingDirective(EKind)
-                           ? S.getCombinedInit()
-                           : S.getInit();
-  OuterLoopArgs.Cond = isOpenMPLoopBoundSharingDirective(EKind)
-                           ? S.getCombinedCond()
-                           : S.getCond();
-  OuterLoopArgs.NextLB = isOpenMPLoopBoundSharingDirective(EKind)
+  OuterLoopArgs.Init = distributeSharesLoopBounds(S) ? S.getCombinedInit()
+                                                     : S.getInit();
+  OuterLoopArgs.Cond = distributeSharesLoopBounds(S) ? S.getCombinedCond()
+                                                     : S.getCond();
+  OuterLoopArgs.NextLB = distributeSharesLoopBounds(S)
                              ? S.getCombinedNextLowerBound()
                              : S.getNextLowerBound();
-  OuterLoopArgs.NextUB = isOpenMPLoopBoundSharingDirective(EKind)
+  OuterLoopArgs.NextUB = distributeSharesLoopBounds(S)
                              ? S.getCombinedNextUpperBound()
                              : S.getNextUpperBound();
   OuterLoopArgs.DKind = OMPD_distribute;
@@ -6210,6 +6215,19 @@ void CodeGenFunction::EmitOMPScanDirective(const OMPScanDirective &S) {
   EmitBlock(OMPAfterScanBlock);
 }
 
+/// Whether the distribute part of \p S shares its loop bounds with an inner 'parallel for'. 'teams loop' and
+/// 'target teams loop' are on the loop-bound-sharing list for the combined 'distribute parallel for' lowering, but a
+/// 'target teams loop' that cannot be a parallel for is emitted as a plain 'distribute'
+/// (emitTargetTeamsGenericLoopRegionAsDistribute), where sharing the bounds ran only the first iteration of every
+/// chunk on GPUs (omp-examples patch, see docs/bug-reports/clang-23.1.6-teams-loop-distribute.patch).
+static bool distributeSharesLoopBounds(const OMPLoopDirective &S) {
+  if (!isOpenMPLoopBoundSharingDirective(S.getDirectiveKind()))
+    return false;
+  if (const auto *TTL = dyn_cast<OMPTargetTeamsGenericLoopDirective>(&S))
+    return TTL->canBeParallelFor();
+  return true;
+}
+
 void CodeGenFunction::EmitOMPDistributeLoop(const OMPLoopDirective &S,
                                             const CodeGenLoopTy &CodeGenLoop,
                                             Expr *IncExpr) {
@@ -6257,12 +6275,12 @@ void CodeGenFunction::EmitOMPDistributeLoop(const OMPLoopDirective &S,
 
       LValue LB = EmitOMPHelperVar(
           *this, cast<DeclRefExpr>(
-                     (isOpenMPLoopBoundSharingDirective(S.getDirectiveKind())
+                     (distributeSharesLoopBounds(S)
                           ? S.getCombinedLowerBoundVariable()
                           : S.getLowerBoundVariable())));
       LValue UB = EmitOMPHelperVar(
           *this, cast<DeclRefExpr>(
-                     (isOpenMPLoopBoundSharingDirective(S.getDirectiveKind())
+                     (distributeSharesLoopBounds(S)
                           ? S.getCombinedUpperBoundVariable()
                           : S.getUpperBoundVariable())));
       LValue ST =
@@ -6327,7 +6345,7 @@ void CodeGenFunction::EmitOMPDistributeLoop(const OMPLoopDirective &S,
         // league. The size of the chunks is unspecified in this case.
         bool StaticChunked =
             RT.isStaticChunked(ScheduleKind, /* Chunked */ Chunk != nullptr) &&
-            isOpenMPLoopBoundSharingDirective(S.getDirectiveKind());
+            distributeSharesLoopBounds(S);
         if (RT.isStaticNonchunked(ScheduleKind,
                                   /* Chunked */ Chunk != nullptr) ||
             StaticChunked) {
@@ -6340,20 +6358,15 @@ void CodeGenFunction::EmitOMPDistributeLoop(const OMPLoopDirective &S,
           JumpDest LoopExit =
               getJumpDestInCurrentScope(createBasicBlock("omp.loop.exit"));
           // UB = min(UB, GlobalUB);
-          EmitIgnoredExpr(
-              isOpenMPLoopBoundSharingDirective(S.getDirectiveKind())
-                  ? S.getCombinedEnsureUpperBound()
-                  : S.getEnsureUpperBound());
+          EmitIgnoredExpr(distributeSharesLoopBounds(S)
+                              ? S.getCombinedEnsureUpperBound()
+                              : S.getEnsureUpperBound());
           // IV = LB;
-          EmitIgnoredExpr(
-              isOpenMPLoopBoundSharingDirective(S.getDirectiveKind())
-                  ? S.getCombinedInit()
-                  : S.getInit());
+          EmitIgnoredExpr(distributeSharesLoopBounds(S) ? S.getCombinedInit()
+                                                        : S.getInit());
 
-          const Expr *Cond =
-              isOpenMPLoopBoundSharingDirective(S.getDirectiveKind())
-                  ? S.getCombinedCond()
-                  : S.getCond();
+          const Expr *Cond = distributeSharesLoopBounds(S) ? S.getCombinedCond()
+                                                           : S.getCond();
 
           if (StaticChunked)
             Cond = S.getCombinedDistCond();
@@ -8661,10 +8674,14 @@ void CodeGenFunction::EmitOMPParallelGenericLoopDirective(
 
 void CodeGenFunction::EmitOMPTeamsGenericLoopDirective(
     const OMPTeamsGenericLoopDirective &S) {
-  // To be consistent with current behavior of 'target teams loop', emit
-  // 'teams loop' as if its constituent constructs are 'teams' and 'distribute'.
+  // 'teams loop' counts as a parallel directive (isOpenMPParallelDirective), so a 'target' region that contains it is
+  // an SPMD kernel: every thread of a team runs the teams region. Emitting it as a plain 'distribute' made all those
+  // threads execute the whole chunk loop redundantly (wrong for in-place bodies such as c[i] = c[i] * c[i]), so emit
+  // it like a combined 'target teams loop' that can be a parallel for: 'teams' and 'distribute parallel for'
+  // (omp-examples patch, docs/bug-reports/clang-23.1.6-teams-loop-distribute.patch).
   auto &&CodeGenDistribute = [&S](CodeGenFunction &CGF, PrePostActionTy &) {
-    CGF.EmitOMPDistributeLoop(S, emitOMPLoopBodyWithStopPoint, S.getInc());
+    CGF.EmitOMPDistributeLoop(S, emitInnerParallelForWhenCombined,
+                              S.getDistInc());
   };
 
   // Emit teams region as a standalone region.
@@ -8678,7 +8695,7 @@ void CodeGenFunction::EmitOMPTeamsGenericLoopDirective(
                                                     CodeGenDistribute);
     CGF.EmitOMPReductionClauseFinal(S, /*ReductionKind=*/OMPD_teams);
   };
-  emitCommonOMPTeamsDirective(*this, S, OMPD_distribute, CodeGen);
+  emitCommonOMPTeamsDirective(*this, S, OMPD_distribute_parallel_for, CodeGen);
   emitPostUpdateForReductionClause(*this, S,
                                    [](CodeGenFunction &) { return nullptr; });
 }
