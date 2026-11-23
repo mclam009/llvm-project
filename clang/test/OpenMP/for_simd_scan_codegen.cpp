@@ -61,7 +61,8 @@ void baz(int n) {
     // CHECK: [[LOG2_10:%.+]] = call double @llvm.log2.f64(double 1.000000e+01)
     // CHECK: [[CEIL_LOG2_10:%.+]] = call double @llvm.ceil.f64(double [[LOG2_10]])
     // CHECK: [[CEIL_LOG2_10_INT:%.+]] = fptoui double [[CEIL_LOG2_10]] to i32
-    // CHECK: br label %[[OUTER_BODY:[^,]+]]
+    // The combine loop is skipped for at most one iteration; here there are 10.
+    // CHECK: br i1 true, label %[[OUTER_BODY:[^,]+]], label %{{.+}}
     // CHECK: [[OUTER_BODY]]:
     // CHECK: [[K:%.+]] = phi i32 [ 0, %{{.+}} ], [ [[K_NEXT:%.+]], %{{.+}} ]
     // CHECK: [[K2POW:%.+]] = phi i64 [ 1, %{{.+}} ], [ [[K2POW_NEXT:%.+]], %{{.+}} ]
@@ -206,7 +207,8 @@ void baz(int n) {
     // CHECK: [[LOG2_10:%.+]] = call double @llvm.log2.f64(double 1.000000e+01)
     // CHECK: [[CEIL_LOG2_10:%.+]] = call double @llvm.ceil.f64(double [[LOG2_10]])
     // CHECK: [[CEIL_LOG2_10_INT:%.+]] = fptoui double [[CEIL_LOG2_10]] to i32
-    // CHECK: br label %[[OUTER_BODY:[^,]+]]
+    // The combine loop is skipped for at most one iteration; here there are 10.
+    // CHECK: br i1 true, label %[[OUTER_BODY:[^,]+]], label %{{.+}}
     // CHECK: [[OUTER_BODY]]:
     // CHECK: [[K:%.+]] = phi i32 [ 0, %{{.+}} ], [ [[K_NEXT:%.+]], %{{.+}} ]
     // CHECK: [[K2POW:%.+]] = phi i64 [ 1, %{{.+}} ], [ [[K2POW_NEXT:%.+]], %{{.+}} ]

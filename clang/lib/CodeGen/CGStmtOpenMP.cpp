@@ -4244,6 +4244,13 @@ static void emitScanBasedDirective(
     llvm::Value *NMin1 = CGF.Builder.CreateNUWSub(
         OMPScanNumIterations, llvm::ConstantInt::get(CGF.SizeTy, 1));
     auto DL = ApplyDebugLocation::CreateDefaultArtificial(CGF, S.getBeginLoc());
+    // The outer loop below runs ceil(log2(n)) times and tests its condition
+    // only at the end. With n <= 1 there is nothing to combine and
+    // ceil(log2(n)) is 0 (or not representable for n == 0), so the loop would
+    // never terminate: skip it.
+    llvm::Value *NeedsCombine = CGF.Builder.CreateICmpUGT(
+        OMPScanNumIterations, llvm::ConstantInt::get(CGF.SizeTy, 1));
+    CGF.Builder.CreateCondBr(NeedsCombine, LoopBB, ExitBB);
     CGF.EmitBlock(LoopBB);
     auto *Counter = CGF.Builder.CreatePHI(CGF.IntTy, 2);
     // size pow2k = 1;
