@@ -2341,6 +2341,8 @@ module std {
     }
     module backend {
       header "__pstl/backend.h"
+      // pstl-omp's OpenMP backend requires -fopenmp, so it is only compiled where backend.h includes it.
+      textual header "__pstl/backends/openmp.h"
       export * // need to export everything from whatever backend is currently configured
     }
     module backends {

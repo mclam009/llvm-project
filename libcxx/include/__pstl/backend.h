@@ -21,7 +21,10 @@ _LIBCPP_PUSH_MACROS
 
 #if _LIBCPP_STD_VER >= 17
 
-#  if defined(_LIBCPP_PSTL_BACKEND_SERIAL)
+#  if defined(_LIBCPP_PSTL_BACKEND_OPENMP)
+#    include <__pstl/backends/default.h>
+#    include <__pstl/backends/openmp.h>
+#  elif defined(_LIBCPP_PSTL_BACKEND_SERIAL)
 #    include <__pstl/backends/default.h>
 #    include <__pstl/backends/serial.h>
 #  elif defined(_LIBCPP_PSTL_BACKEND_STD_THREAD)
