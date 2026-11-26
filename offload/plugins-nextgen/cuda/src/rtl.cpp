@@ -705,6 +705,12 @@ struct CUDADeviceTy : public GenericDeviceTy {
   /// Synchronize current thread with the pending operations on the async info.
   Error synchronizeImpl(__tgt_async_info &AsyncInfo,
                         bool ReleaseQueue) override {
+    // The thread may not have made the context current yet: a target task is
+    // re-enqueued to any thread of the team while its operations are pending.
+    // CuMetal requires a current context for stream and event calls.
+    if (auto Err = setContext())
+      return Err;
+
     CUstream Stream = reinterpret_cast<CUstream>(AsyncInfo.Queue);
     CUresult Res;
     Res = cuStreamSynchronize(Stream);
@@ -827,6 +833,10 @@ struct CUDADeviceTy : public GenericDeviceTy {
                        bool *IsQueueWorkCompleted) override {
     if (IsQueueWorkCompleted)
       *IsQueueWorkCompleted = false;
+    // See synchronizeImpl.
+    if (auto Err = setContext())
+      return Err;
+
     CUstream Stream = reinterpret_cast<CUstream>(AsyncInfo.Queue);
     CUresult Res = cuStreamQuery(Stream);
 
@@ -1080,6 +1090,10 @@ struct CUDADeviceTy : public GenericDeviceTy {
   /// Non-profiling events use CU_EVENT_DISABLE_TIMING from the pool.
   /// Profiling events are created directly with timing and not pooled.
   Error createEventImpl(void **EventPtrStorage, bool EnableProfiling) override {
+    // See synchronizeImpl, as in all functions on events.
+    if (auto Err = setContext())
+      return Err;
+
     CUevent *Event = reinterpret_cast<CUevent *>(EventPtrStorage);
     if (EnableProfiling) {
       CUresult Res = cuEventCreate(Event, CU_EVENT_DEFAULT);
@@ -1091,6 +1105,9 @@ struct CUDADeviceTy : public GenericDeviceTy {
   /// Profiling events are destroyed directly; non-profiling events return to
   /// the pool.
   Error destroyEventImpl(void *EventPtr, bool EnableProfiling) override {
+    if (auto Err = setContext())
+      return Err;
+
     CUevent Event = reinterpret_cast<CUevent>(EventPtr);
     if (EnableProfiling) {
       CUresult Res = cuEventDestroy(Event);
@@ -1102,6 +1119,9 @@ struct CUDADeviceTy : public GenericDeviceTy {
   /// Record the event.
   Error recordEventImpl(void *EventPtr, AsyncInfoWrapperTy &AsyncInfoWrapper,
                         bool EnableProfiling) override {
+    if (auto Err = setContext())
+      return Err;
+
     CUevent Event = reinterpret_cast<CUevent>(EventPtr);
 
     CUstream Stream;
@@ -1115,6 +1135,9 @@ struct CUDADeviceTy : public GenericDeviceTy {
   /// Make the stream wait on the event.
   Error waitEventImpl(void *EventPtr,
                       AsyncInfoWrapperTy &AsyncInfoWrapper) override {
+    if (auto Err = setContext())
+      return Err;
+
     CUevent Event = reinterpret_cast<CUevent>(EventPtr);
 
     CUstream Stream;
@@ -1129,6 +1152,9 @@ struct CUDADeviceTy : public GenericDeviceTy {
   }
 
   Expected<bool> hasPendingWorkImpl(AsyncInfoWrapperTy &AsyncInfo) override {
+    if (auto Err = setContext())
+      return std::move(Err);
+
     CUstream Stream;
     if (auto Err = getStream(AsyncInfo, Stream))
       return Err;
@@ -1145,6 +1171,9 @@ struct CUDADeviceTy : public GenericDeviceTy {
 
   Expected<bool> isEventCompleteImpl(void *EventPtr,
                                      AsyncInfoWrapperTy &) override {
+    if (auto Err = setContext())
+      return std::move(Err);
+
     CUevent Event = reinterpret_cast<CUevent>(EventPtr);
 
     CUresult Ret = cuEventQuery(Event);
@@ -1159,6 +1188,9 @@ struct CUDADeviceTy : public GenericDeviceTy {
 
   /// Synchronize the current thread with the event.
   Error syncEventImpl(void *EventPtr) override {
+    if (auto Err = setContext())
+      return Err;
+
     CUevent Event = reinterpret_cast<CUevent>(EventPtr);
     CUresult Res = cuEventSynchronize(Event);
     return Plugin::check(Res, "error in cuEventSynchronize: %s");
@@ -1167,6 +1199,9 @@ struct CUDADeviceTy : public GenericDeviceTy {
   /// Get the elapsed time in milliseconds between two events.
   Expected<float> getEventElapsedTimeImpl(void *StartEventPtr,
                                           void *EndEventPtr) override {
+    if (auto Err = setContext())
+      return std::move(Err);
+
     CUevent StartEvent = reinterpret_cast<CUevent>(StartEventPtr);
     CUevent EndEvent = reinterpret_cast<CUevent>(EndEventPtr);
 
