@@ -32,6 +32,8 @@
 
 EXTERN void ompx_dump_mapping_tables() {
   ident_t Loc = {0, 0, 0, 0, ";libomptarget;libomptarget;0;0;;"};
+  if (!PM)
+    return;
   auto ExclusiveDevicesAccessor = PM->getExclusiveDevicesAccessor();
   for (auto &Device : PM->devices(ExclusiveDevicesAccessor))
     dumpTargetPointerMappings(&Loc, Device, true);
@@ -55,7 +57,8 @@ void targetUnlockExplicit(void *HostPtr, int DeviceNum, const char *Name);
 EXTERN int omp_get_num_devices(void) {
   TIMESCOPE();
   OMPT_IF_BUILT(ReturnAddressSetterRAII RA(__builtin_return_address(0)));
-  size_t NumDevices = PM->getNumDevices();
+  // No plugin manager: no offload image has been registered, so no devices.
+  size_t NumDevices = PM ? PM->getNumDevices() : 0;
 
   ODBG(ODT_Interface) << "Call to " << __func__ << " returning " << NumDevices;
 
@@ -93,6 +96,10 @@ EXTERN int omp_get_device_from_uid(const char *DeviceUid) {
   }
 
   int DeviceNum = omp_invalid_device;
+  if (!PM) {
+    ODBG(ODT_Interface) << "Call to " << __func__ << " returning " << DeviceNum;
+    return DeviceNum;
+  }
 
   auto ExclusiveDevicesAccessor = PM->getExclusiveDevicesAccessor();
   for (const DeviceTy &Device : PM->devices(ExclusiveDevicesAccessor)) {
@@ -121,7 +128,7 @@ EXTERN const char *omp_get_uid_from_device(int DeviceNum) {
     return GenericPluginTy::getHostDeviceUid();
   }
 
-  auto DeviceOrErr = PM->getDevice(DeviceNum);
+  auto DeviceOrErr = getDeviceOrError(DeviceNum);
   if (!DeviceOrErr)
     FATAL_MESSAGE(DeviceNum, "%s", toString(DeviceOrErr.takeError()).c_str());
 
@@ -148,7 +155,7 @@ EXTERN size_t omp_get_gprivate_limit(int DeviceNum, omp_access_t AccessGroup) {
   if (AccessGroup != omp_access_cgroup)
     return 0;
 
-  auto DeviceOrErr = PM->getDevice(DeviceNum);
+  auto DeviceOrErr = getDeviceOrError(DeviceNum);
   if (!DeviceOrErr)
     FATAL_MESSAGE(DeviceNum, "%s", toString(DeviceOrErr.takeError()).c_str());
 
@@ -236,7 +243,7 @@ EXTERN int omp_target_is_present(const void *Ptr, int DeviceNum) {
     return true;
   }
 
-  auto DeviceOrErr = PM->getDevice(DeviceNum);
+  auto DeviceOrErr = getDeviceOrError(DeviceNum);
   if (!DeviceOrErr)
     FATAL_MESSAGE(DeviceNum, "%s", toString(DeviceOrErr.takeError()).c_str());
 
@@ -274,7 +281,7 @@ EXTERN int omp_target_is_accessible(const void *Ptr, size_t Size,
   }
 
   // The device number must refer to a valid device
-  auto DeviceOrErr = PM->getDevice(DeviceNum);
+  auto DeviceOrErr = getDeviceOrError(DeviceNum);
   if (!DeviceOrErr)
     FATAL_MESSAGE(DeviceNum, "%s", toString(DeviceOrErr.takeError()).c_str());
 
@@ -315,7 +322,7 @@ EXTERN int omp_target_memcpy(void *Dst, const void *Src, size_t Length,
       Rc = OFFLOAD_FAIL;
   } else if (isInitialDevice(SrcDevice)) {
     ODBG(ODT_Interface) << "copy from host to device";
-    auto DstDeviceOrErr = PM->getDevice(DstDevice);
+    auto DstDeviceOrErr = getDeviceOrError(DstDevice);
     if (!DstDeviceOrErr)
       FATAL_MESSAGE(DstDevice, "%s",
                     toString(DstDeviceOrErr.takeError()).c_str());
@@ -323,7 +330,7 @@ EXTERN int omp_target_memcpy(void *Dst, const void *Src, size_t Length,
     Rc = DstDeviceOrErr->submitData(DstAddr, SrcAddr, Length, AsyncInfo);
   } else if (isInitialDevice(DstDevice)) {
     ODBG(ODT_Interface) << "copy from device to host";
-    auto SrcDeviceOrErr = PM->getDevice(SrcDevice);
+    auto SrcDeviceOrErr = getDeviceOrError(SrcDevice);
     if (!SrcDeviceOrErr)
       FATAL_MESSAGE(SrcDevice, "%s",
                     toString(SrcDeviceOrErr.takeError()).c_str());
@@ -331,12 +338,12 @@ EXTERN int omp_target_memcpy(void *Dst, const void *Src, size_t Length,
     Rc = SrcDeviceOrErr->retrieveData(DstAddr, SrcAddr, Length, AsyncInfo);
   } else {
     ODBG(ODT_Interface) << "copy from device to device";
-    auto SrcDeviceOrErr = PM->getDevice(SrcDevice);
+    auto SrcDeviceOrErr = getDeviceOrError(SrcDevice);
     if (!SrcDeviceOrErr)
       FATAL_MESSAGE(SrcDevice, "%s",
                     toString(SrcDeviceOrErr.takeError()).c_str());
     AsyncInfoTy AsyncInfo(*SrcDeviceOrErr);
-    auto DstDeviceOrErr = PM->getDevice(DstDevice);
+    auto DstDeviceOrErr = getDeviceOrError(DstDevice);
     if (!DstDeviceOrErr)
       FATAL_MESSAGE(DstDevice, "%s",
                     toString(DstDeviceOrErr.takeError()).c_str());
@@ -482,7 +489,7 @@ EXTERN void *omp_target_memset(void *Ptr, int ByteVal, size_t NumBytes,
         nullptr, const_cast<void *>(Ptr), NumBytes,
         __builtin_return_address(0)));
 
-    auto DeviceOrErr = PM->getDevice(DeviceNum);
+    auto DeviceOrErr = getDeviceOrError(DeviceNum);
     if (!DeviceOrErr)
       FATAL_MESSAGE(DeviceNum, "%s", toString(DeviceOrErr.takeError()).c_str());
     AsyncInfoTy AsyncInfo(*DeviceOrErr);
@@ -676,7 +683,7 @@ EXTERN int omp_target_associate_ptr(const void *HostPtr, const void *DevicePtr,
     return OFFLOAD_FAIL;
   }
 
-  auto DeviceOrErr = PM->getDevice(DeviceNum);
+  auto DeviceOrErr = getDeviceOrError(DeviceNum);
   if (!DeviceOrErr)
     FATAL_MESSAGE(DeviceNum, "%s", toString(DeviceOrErr.takeError()).c_str());
 
@@ -709,7 +716,7 @@ EXTERN int omp_target_disassociate_ptr(const void *HostPtr, int DeviceNum) {
     return OFFLOAD_FAIL;
   }
 
-  auto DeviceOrErr = PM->getDevice(DeviceNum);
+  auto DeviceOrErr = getDeviceOrError(DeviceNum);
   if (!DeviceOrErr)
     FATAL_MESSAGE(DeviceNum, "%s", toString(DeviceOrErr.takeError()).c_str());
 
@@ -748,7 +755,7 @@ EXTERN void *omp_get_mapped_ptr(const void *Ptr, int DeviceNum) {
     return nullptr;
   }
 
-  auto DeviceOrErr = PM->getDevice(DeviceNum);
+  auto DeviceOrErr = getDeviceOrError(DeviceNum);
   if (!DeviceOrErr)
     FATAL_MESSAGE(DeviceNum, "%s", toString(DeviceOrErr.takeError()).c_str());
 

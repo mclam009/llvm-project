@@ -199,7 +199,7 @@ omp_interop_val_t *__tgt_interop_get(ident_t *LocRef, int32_t InteropType,
                       << (Ctx->flags.implicit ? " (implicit)" : "")
                       << (Ctx->flags.nowait ? " (nowait)" : "");
 
-  if (OffloadPolicy::get(*PM).Kind == OffloadPolicy::DISABLED)
+  if (!PM || OffloadPolicy::get(*PM).Kind == OffloadPolicy::DISABLED)
     return omp_interop_none;
 
   // Now, try to create an interop with device_num.
@@ -217,7 +217,7 @@ omp_interop_val_t *__tgt_interop_get(ident_t *LocRef, int32_t InteropType,
                            Deps->ndeps_noalias, Deps->noalias_deplist);
   }
 
-  auto DeviceOrErr = PM->getDevice(DeviceNum);
+  auto DeviceOrErr = getDeviceOrError(DeviceNum);
   if (!DeviceOrErr) {
     std::string ErrStr = toString(DeviceOrErr.takeError());
     ODBG(ODT_Interface) << "Couldn't find device " << DeviceNum
@@ -275,7 +275,7 @@ int __tgt_interop_use60(ident_t *LocRef, omp_interop_val_t *Interop,
   bool Nowait = Ctx->flags.nowait;
   ODBG(ODT_Interface) << "Call to " << __func__ << " with interop " << Interop
                       << ", nowait " << Nowait;
-  if (OffloadPolicy::get(*PM).Kind == OffloadPolicy::DISABLED || !Interop)
+  if (!PM || OffloadPolicy::get(*PM).Kind == OffloadPolicy::DISABLED || !Interop)
     return OFFLOAD_FAIL;
 
   if (Interop->interop_type == kmp_interop_type_targetsync) {
@@ -317,7 +317,7 @@ int __tgt_interop_release(ident_t *LocRef, omp_interop_val_t *Interop,
                           interop_ctx_t *Ctx, dep_pack_t *Deps) {
   ODBG(ODT_Interface) << "Call to " << __func__ << " with interop " << Interop;
 
-  if (OffloadPolicy::get(*PM).Kind == OffloadPolicy::DISABLED || !Interop)
+  if (!PM || OffloadPolicy::get(*PM).Kind == OffloadPolicy::DISABLED || !Interop)
     return OFFLOAD_FAIL;
 
   if (Interop->interop_type == kmp_interop_type_targetsync) {
@@ -348,7 +348,7 @@ EXTERN int ompx_interop_add_completion_callback(omp_interop_val_t *Interop,
                       << ", property callback " << reinterpret_cast<void *>(CB)
                       << " and data " << Data;
 
-  if (OffloadPolicy::get(*PM).Kind == OffloadPolicy::DISABLED || !Interop)
+  if (!PM || OffloadPolicy::get(*PM).Kind == OffloadPolicy::DISABLED || !Interop)
     return omp_irc_other;
 
   Interop->addCompletionCb(CB, Data);
@@ -393,7 +393,7 @@ void __tgt_interop_destroy(ident_t *LocRef, int32_t Gtid,
 } // extern "C"
 
 llvm::Expected<DeviceTy &> omp_interop_val_t::getDevice() const {
-  return PM->getDevice(device_id);
+  return getDeviceOrError(device_id);
 }
 
 bool omp_interop_val_t::isCompatibleWith(int32_t InteropType,

@@ -217,7 +217,7 @@ void *targetAllocExplicit(size_t Size, int DeviceNum, int Kind,
     return Rc;
   }
 
-  auto DeviceOrErr = PM->getDevice(DeviceNum);
+  auto DeviceOrErr = getDeviceOrError(DeviceNum);
   if (!DeviceOrErr)
     FATAL_MESSAGE(DeviceNum, "%s", toString(DeviceOrErr.takeError()).c_str());
 
@@ -242,7 +242,7 @@ void targetFreeExplicit(void *DevicePtr, int DeviceNum, int Kind,
     return;
   }
 
-  auto DeviceOrErr = PM->getDevice(DeviceNum);
+  auto DeviceOrErr = getDeviceOrError(DeviceNum);
   if (!DeviceOrErr)
     FATAL_MESSAGE(DeviceNum, "%s", toString(DeviceOrErr.takeError()).c_str());
 
@@ -266,7 +266,7 @@ void *targetLockExplicit(void *HostPtr, size_t Size, int DeviceNum,
 
   void *RC = NULL;
 
-  auto DeviceOrErr = PM->getDevice(DeviceNum);
+  auto DeviceOrErr = getDeviceOrError(DeviceNum);
   if (!DeviceOrErr)
     FATAL_MESSAGE(DeviceNum, "%s", toString(DeviceOrErr.takeError()).c_str());
 
@@ -284,7 +284,7 @@ void targetUnlockExplicit(void *HostPtr, int DeviceNum, const char *Name) {
   ODBG(ODT_Interface) << "Call to " << Name << " for device " << DeviceNum
                       << " unlocking";
 
-  auto DeviceOrErr = PM->getDevice(DeviceNum);
+  auto DeviceOrErr = getDeviceOrError(DeviceNum);
   if (!DeviceOrErr)
     FATAL_MESSAGE(DeviceNum, "%s", toString(DeviceOrErr.takeError()).c_str());
 
