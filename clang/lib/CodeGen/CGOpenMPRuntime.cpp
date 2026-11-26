@@ -3716,6 +3716,26 @@ public:
 };
 } // namespace
 
+/// The iterator modifier of a map, to or from clause, if it has one.
+static const OMPIteratorExpr *getMapIteratorModifier(const OMPClause *C) {
+  const Expr *Modifier = nullptr;
+  if (const auto *MC = dyn_cast<OMPMapClause>(C)) {
+    if (llvm::is_contained(MC->getMapTypeModifiers(),
+                           OMPC_MAP_MODIFIER_iterator))
+      Modifier = const_cast<OMPMapClause *>(MC)->getIteratorModifier();
+  } else if (const auto *TC = dyn_cast<OMPToClause>(C)) {
+    if (llvm::is_contained(TC->getMotionModifiers(),
+                           OMPC_MOTION_MODIFIER_iterator))
+      Modifier = TC->getIteratorModifier();
+  } else if (const auto *FC = dyn_cast<OMPFromClause>(C)) {
+    if (llvm::is_contained(FC->getMotionModifiers(),
+                           OMPC_MOTION_MODIFIER_iterator))
+      Modifier = FC->getIteratorModifier();
+  }
+  return Modifier ? dyn_cast<OMPIteratorExpr>(Modifier->IgnoreParenImpCasts())
+                  : nullptr;
+}
+
 static std::pair<llvm::Value *, llvm::Value *>
 getPointerAndSize(CodeGenFunction &CGF, const Expr *E) {
   const auto *OASE = dyn_cast<OMPArrayShapingExpr>(E);
@@ -7253,8 +7273,40 @@ public:
     MapValueDeclsArrayTy Mappers;
     MapValueDeclsArrayTy DevicePtrDecls;
 
+    /// A list item of a clause with an iterator modifier: the entry that
+    /// stands for all its iterations (see generateInfoForIteratorMaps), and
+    /// the components of one iteration, which its mapper function pushes.
+    struct IteratorMapTy {
+      unsigned Index = 0;
+      MapFlagsArrayTy Types;
+      MapValueDeclsArrayTy Mappers;
+      MapExprsArrayTy Exprs;
+      llvm::Function *MapperFn = nullptr;
+    };
+    SmallVector<IteratorMapTy, 1> IteratorMaps;
+
+    /// The list item with an iterator modifier of entry \p I, if any.
+    IteratorMapTy *getIteratorMap(unsigned I) {
+      for (IteratorMapTy &IM : IteratorMaps)
+        if (IM.Index == I)
+          return &IM;
+      return nullptr;
+    }
+
+    /// The entries of list items with an iterator modifier.
+    SmallVector<unsigned, 1> getIteratorMapIndices() const {
+      SmallVector<unsigned, 1> Indices;
+      for (const IteratorMapTy &IM : IteratorMaps)
+        Indices.push_back(IM.Index);
+      return Indices;
+    }
+
     /// Append arrays in \a CurInfo.
     void append(MapCombinedInfoTy &CurInfo) {
+      for (IteratorMapTy &IM : CurInfo.IteratorMaps) {
+        IteratorMaps.push_back(IM);
+        IteratorMaps.back().Index += BasePointers.size();
+      }
       Exprs.append(CurInfo.Exprs.begin(), CurInfo.Exprs.end());
       DevicePtrDecls.append(CurInfo.DevicePtrDecls.begin(),
                             CurInfo.DevicePtrDecls.end());
@@ -8891,9 +8943,14 @@ private:
               IsImplicit, Mapper, VarRef, ForDeviceAddr);
         };
 
+    // On a construct, the list items of clauses with an iterator modifier get
+    // entries of their own, after all others (generateInfoForIteratorMaps).
+    // FIXME: on a declare mapper (OpenMP 5.2) the list item is still mapped
+    // once, with the iterator as a variable of its own.
+    const bool SkipIteratorMaps = isa<const OMPExecutableDirective *>(CurDir);
     for (const auto *Cl : Clauses) {
       const auto *C = dyn_cast<OMPMapClause>(Cl);
-      if (!C)
+      if (!C || (SkipIteratorMaps && getMapIteratorModifier(C)))
         continue;
       MapKind Kind = Other;
       if (llvm::is_contained(C->getMapTypeModifiers(),
@@ -8913,20 +8970,12 @@ private:
     }
     for (const auto *Cl : Clauses) {
       const auto *C = dyn_cast<OMPToClause>(Cl);
-      if (!C)
+      if (!C || getMapIteratorModifier(C))
         continue;
       MapKind Kind = Other;
       if (llvm::is_contained(C->getMotionModifiers(),
                              OMPC_MOTION_MODIFIER_present))
         Kind = Present;
-      if (llvm::is_contained(C->getMotionModifiers(),
-                             OMPC_MOTION_MODIFIER_iterator)) {
-        if (auto *IteratorExpr = dyn_cast<OMPIteratorExpr>(
-                C->getIteratorModifier()->IgnoreParenImpCasts())) {
-          const auto *VD = cast<VarDecl>(IteratorExpr->getIteratorDecl(0));
-          CGF.EmitVarDecl(*VD);
-        }
-      }
 
       const auto *EI = C->getVarRefs().begin();
       for (const auto L : C->component_lists()) {
@@ -8938,20 +8987,12 @@ private:
     }
     for (const auto *Cl : Clauses) {
       const auto *C = dyn_cast<OMPFromClause>(Cl);
-      if (!C)
+      if (!C || getMapIteratorModifier(C))
         continue;
       MapKind Kind = Other;
       if (llvm::is_contained(C->getMotionModifiers(),
                              OMPC_MOTION_MODIFIER_present))
         Kind = Present;
-      if (llvm::is_contained(C->getMotionModifiers(),
-                             OMPC_MOTION_MODIFIER_iterator)) {
-        if (auto *IteratorExpr = dyn_cast<OMPIteratorExpr>(
-                C->getIteratorModifier()->IgnoreParenImpCasts())) {
-          const auto *VD = cast<VarDecl>(IteratorExpr->getIteratorDecl(0));
-          CGF.EmitVarDecl(*VD);
-        }
-      }
 
       const auto *EI = C->getVarRefs().begin();
       for (const auto L : C->component_lists()) {
@@ -9358,7 +9399,7 @@ public:
         HasDevAddrsMap[std::get<0>(L)].push_back(std::get<1>(L));
     // Extract map information.
     for (const auto *C : Dir.getClausesOfKind<OMPMapClause>()) {
-      if (C->getMapType() != OMPC_MAP_to)
+      if (C->getMapType() != OMPC_MAP_to || getMapIteratorModifier(C))
         continue;
       for (auto L : C->component_lists()) {
         const ValueDecl *VD = std::get<0>(L);
@@ -9557,6 +9598,197 @@ public:
                               OMPBuilder);
   }
 
+  /// Generate the entries of the list items of map, to and from clauses with
+  /// an iterator modifier (OpenMP 5.1), after all other entries. A list item
+  /// stands for one list item per iteration, so its number of components is
+  /// only known at run time: it gets one entry, whose mapper function
+  /// (emitIteratorMapperFunction) pushes the components of every iteration.
+  /// They are evaluated here, before the construct, as for any list item, into
+  /// a heap buffer of {base, begin, size} records, which is the base and begin
+  /// of the entry; its size is the number of iterations. The callers free the
+  /// buffer after the runtime call (emitIteratorMapCleanup).
+  void generateInfoForIteratorMaps(MapCombinedInfoTy &CombinedInfo,
+                                   llvm::OpenMPIRBuilder &OMPBuilder) const {
+    const auto *CurExecDir = dyn_cast<const OMPExecutableDirective *>(CurDir);
+    if (!CurExecDir)
+      return;
+    auto GenerateForClause =
+        [&](const auto *C, const OMPIteratorExpr *IE,
+            OpenMPMapClauseKind MapType,
+            ArrayRef<OpenMPMapModifierKind> MapModifiers,
+            ArrayRef<OpenMPMotionModifierKind> MotionModifiers) {
+          const auto *EI = C->getVarRefs().begin();
+          for (const auto L : C->component_lists()) {
+            generateInfoForIteratorListItem(
+                IE, MapType, MapModifiers, MotionModifiers, std::get<0>(L),
+                std::get<1>(L), std::get<2>(L), *EI, CombinedInfo, OMPBuilder);
+            ++EI;
+          }
+        };
+    for (const OMPClause *C : CurExecDir->clauses()) {
+      const OMPIteratorExpr *IE = getMapIteratorModifier(C);
+      if (!IE)
+        continue;
+      if (const auto *MC = dyn_cast<OMPMapClause>(C))
+        GenerateForClause(MC, IE, MC->getMapType(), MC->getMapTypeModifiers(),
+                          {});
+      else if (const auto *TC = dyn_cast<OMPToClause>(C))
+        GenerateForClause(TC, IE, OMPC_MAP_to, {}, TC->getMotionModifiers());
+      else if (const auto *FC = dyn_cast<OMPFromClause>(C))
+        GenerateForClause(FC, IE, OMPC_MAP_from, {}, FC->getMotionModifiers());
+    }
+  }
+
+private:
+  /// Generate the entry of one list item with an iterator modifier (see
+  /// generateInfoForIteratorMaps).
+  void generateInfoForIteratorListItem(
+      const OMPIteratorExpr *IE, OpenMPMapClauseKind MapType,
+      ArrayRef<OpenMPMapModifierKind> MapModifiers,
+      ArrayRef<OpenMPMotionModifierKind> MotionModifiers, const ValueDecl *VD,
+      OMPClauseMappableExprCommon::MappableExprComponentListRef Components,
+      const ValueDecl *Mapper, const Expr *VarRef,
+      MapCombinedInfoTy &CombinedInfo,
+      llvm::OpenMPIRBuilder &OMPBuilder) const {
+    CodeGenModule &CGM = CGF.CGM;
+    CGBuilderTy &Builder = CGF.Builder;
+    llvm::Type *PtrTy = Builder.getPtrTy();
+    llvm::StructType *RecordTy = llvm::StructType::get(
+        CGM.getLLVMContext(), {PtrTy, PtrTy, CGF.Int64Ty});
+
+    // The number of iterations, for the size of the buffer.
+    llvm::Value *NumIterations = Builder.getInt64(1);
+    for (unsigned I = 0, E = IE->numOfIterators(); I < E; ++I) {
+      const Expr *Upper = IE->getHelper(I).Upper;
+      llvm::Value *N = CGF.EmitScalarExpr(Upper);
+      bool IsSigned = Upper->getType()->isSignedIntegerOrEnumerationType();
+      if (IsSigned)
+        N = Builder.CreateSelect(
+            Builder.CreateICmpSLT(N, llvm::ConstantInt::get(N->getType(), 0)),
+            llvm::ConstantInt::get(N->getType(), 0), N);
+      N = Builder.CreateIntCast(N, CGF.Int64Ty, IsSigned);
+      NumIterations = Builder.CreateNUWMul(NumIterations, N);
+    }
+    RawAddress RecordsAddr =
+        CGF.CreateDefaultAlignTempAlloca(PtrTy, ".omp.iterator.map.records");
+    RawAddress CounterAddr = CGF.CreateDefaultAlignTempAlloca(
+        CGF.Int64Ty, ".omp.iterator.map.counter");
+    // The buffer is allocated before this store, once the number of
+    // components of an iteration is known.
+    llvm::Instruction *AllocPt =
+        Builder.CreateStore(Builder.getInt64(0), CounterAddr);
+
+    // The components of the last iteration; their types and mappers are the
+    // same for all.
+    MapCombinedInfoTy IterationInfo;
+    {
+      OMPIteratorGeneratorScope IteratorScope(CGF, IE);
+      MapCombinedInfoTy CurInfo;
+      MapCombinedInfoTy StructBaseCurInfo;
+      StructRangeInfoTy PartialStruct;
+      AttachInfoTy AttachInfo;
+      generateInfoForComponentList(
+          MapType, MapModifiers, MotionModifiers, Components, CurInfo,
+          StructBaseCurInfo, PartialStruct, AttachInfo,
+          /*IsFirstComponentList=*/false, /*IsImplicit=*/false,
+          /*GenerateAllInfoForClauses=*/true, Mapper, /*ForDeviceAddr=*/false,
+          VD, VarRef, /*OverlappedElements=*/{});
+      // As in generateAllInfoForClauses: the combined entry of a struct with
+      // members mapped, the members, then the attach entry. The MEMBER_OF
+      // flags count from the first component of the iteration.
+      MapCombinedInfoTy UnionCurInfo;
+      UnionCurInfo.append(StructBaseCurInfo);
+      UnionCurInfo.append(CurInfo);
+      if (PartialStruct.Base.isValid()) {
+        UnionCurInfo.NonContigInfo.Dims.insert(
+            UnionCurInfo.NonContigInfo.Dims.begin(), 1);
+        emitCombinedEntry(IterationInfo, UnionCurInfo.Types, PartialStruct,
+                          AttachInfo, /*IsMapThis=*/!VD, OMPBuilder, VD,
+                          /*OffsetForMemberOfFlag=*/0,
+                          /*NotTargetParams=*/true);
+      }
+      IterationInfo.append(UnionCurInfo);
+      if (AttachInfo.isValid())
+        emitAttachEntry(CGF, IterationInfo, AttachInfo);
+
+      // records[counter * K + J] = {base, begin, size} of component J.
+      unsigned K = IterationInfo.BasePointers.size();
+      CharUnits RecordAlign = CharUnits::fromQuantity(
+          CGM.getDataLayout().getABITypeAlign(RecordTy).value());
+      llvm::Value *Counter = Builder.CreateLoad(CounterAddr);
+      llvm::Value *Records = Builder.CreateLoad(RecordsAddr);
+      llvm::Value *First = Builder.CreateNUWMul(Counter, Builder.getInt64(K));
+      for (unsigned J = 0; J < K; ++J) {
+        Address Record(Builder.CreateInBoundsGEP(
+                           RecordTy, Records,
+                           Builder.CreateNUWAdd(First, Builder.getInt64(J))),
+                       RecordTy, RecordAlign);
+        Builder.CreateStore(IterationInfo.BasePointers[J],
+                            Builder.CreateStructGEP(Record, 0));
+        Builder.CreateStore(IterationInfo.Pointers[J],
+                            Builder.CreateStructGEP(Record, 1));
+        Builder.CreateStore(Builder.CreateIntCast(IterationInfo.Sizes[J],
+                                                  CGF.Int64Ty,
+                                                  /*isSigned=*/false),
+                            Builder.CreateStructGEP(Record, 2));
+      }
+      Builder.CreateStore(Builder.CreateNUWAdd(Counter, Builder.getInt64(1)),
+                          CounterAddr);
+    }
+
+    unsigned K = IterationInfo.BasePointers.size();
+    for (OpenMPOffloadMappingFlags Type : IterationInfo.Types)
+      if (static_cast<std::underlying_type_t<OpenMPOffloadMappingFlags>>(
+              Type & OpenMPOffloadMappingFlags::OMP_MAP_NON_CONTIG)) {
+        CGM.ErrorUnsupported(VarRef, "non-contiguous array section with an "
+                                     "iterator modifier");
+        return;
+      }
+    {
+      llvm::IRBuilderBase::InsertPointGuard Guard(Builder);
+      Builder.SetInsertPoint(AllocPt);
+      llvm::Value *Bytes = Builder.CreateNUWMul(
+          NumIterations,
+          Builder.getInt64(
+              K *
+              CGM.getDataLayout().getTypeAllocSize(RecordTy).getFixedValue()));
+      llvm::FunctionCallee Malloc = CGM.CreateRuntimeFunction(
+          llvm::FunctionType::get(PtrTy, {CGM.SizeTy}, /*isVarArg=*/false),
+          "malloc");
+      llvm::Value *Buffer = CGF.EmitNounwindRuntimeCall(
+          Malloc, {Builder.CreateIntCast(Bytes, CGM.SizeTy,
+                                         /*isSigned=*/false)});
+      Builder.CreateStore(Buffer, RecordsAddr);
+    }
+
+    // The entry: no TARGET_PARAM, and only the TO and FROM bits of the clause,
+    // with which the mapper function combines the types of the components as
+    // a user-defined mapper does (map-type decay).
+    llvm::Value *Records = Builder.CreateLoad(RecordsAddr);
+    CombinedInfo.Exprs.emplace_back(VD, VarRef);
+    CombinedInfo.BasePointers.push_back(Records);
+    CombinedInfo.DevicePtrDecls.push_back(nullptr);
+    CombinedInfo.DevicePointers.push_back(DeviceInfoTy::None);
+    CombinedInfo.Pointers.push_back(Records);
+    CombinedInfo.Sizes.push_back(Builder.CreateLoad(CounterAddr));
+    CombinedInfo.Types.push_back(
+        getMapTypeBits(MapType, MapModifiers, MotionModifiers,
+                       /*IsImplicit=*/false, /*AddPtrFlag=*/false,
+                       /*AddIsTargetParamFlag=*/false,
+                       /*IsNonContiguous=*/false) &
+        (OpenMPOffloadMappingFlags::OMP_MAP_TO |
+         OpenMPOffloadMappingFlags::OMP_MAP_FROM));
+    CombinedInfo.Mappers.push_back(nullptr);
+    CombinedInfo.NonContigInfo.Dims.push_back(1);
+    MapCombinedInfoTy::IteratorMapTy &IM =
+        CombinedInfo.IteratorMaps.emplace_back();
+    IM.Index = CombinedInfo.BasePointers.size() - 1;
+    IM.Types = IterationInfo.Types;
+    IM.Mappers = IterationInfo.Mappers;
+    IM.Exprs = IterationInfo.Exprs;
+  }
+
+public:
   /// Emit capture info for lambdas for variables captured by reference.
   void generateInfoForLambdaCaptures(
       const ValueDecl *VD, llvm::Value *Arg, MapCombinedInfoTy &CombinedInfo,
@@ -9696,6 +9928,9 @@ public:
            "Expect a executable directive");
     const auto *CurExecDir = cast<const OMPExecutableDirective *>(CurDir);
     for (const auto *C : CurExecDir->getClausesOfKind<OMPMapClause>()) {
+      // See generateInfoForIteratorMaps.
+      if (getMapIteratorModifier(C))
+        continue;
       const auto *EI = C->getVarRefs().begin();
       for (const auto L : C->decl_component_lists(VD)) {
         const ValueDecl *VDecl, *Mapper;
@@ -10376,6 +10611,138 @@ emitMappingInformation(CodeGenFunction &CGF, llvm::OpenMPIRBuilder &OMPBuilder,
   return OMPBuilder.getOrCreateSrcLocStr(FileName, ExprName, PLoc.getLine(),
                                          PLoc.getColumn(), SrcLocStrSize);
 }
+
+/// Emit the mapper function of a list item with an iterator modifier (see
+/// MappableExprsHandler::generateInfoForIteratorMaps). Its begin argument is
+/// the buffer of {base, begin, size} records, K = IM.Types.size() per
+/// iteration, and its size argument the number of iterations. It pushes the
+/// records as map components with the types of IM, or calls their mappers,
+/// as a user-defined mapper does: the TO and FROM bits decay with those of its
+/// map type, a component without a MEMBER_OF field takes that of its map type
+/// (none in a construct), and the MEMBER_OF fields of the components of an
+/// iteration, which count from its first component, are shifted by the number
+/// of components pushed before it.
+static llvm::Function *emitIteratorMapperFunction(
+    CodeGenFunction &CGF, llvm::OpenMPIRBuilder &OMPBuilder,
+    MappableExprsHandler::MapCombinedInfoTy::IteratorMapTy &IM) {
+  if (IM.MapperFn)
+    return IM.MapperFn;
+  using OpenMPOffloadMappingFlags = llvm::omp::OpenMPOffloadMappingFlags;
+  using FlagsTy = std::underlying_type_t<OpenMPOffloadMappingFlags>;
+  CodeGenModule &CGM = CGF.CGM;
+  llvm::LLVMContext &Ctx = CGM.getLLVMContext();
+  llvm::Module &M = CGM.getModule();
+  llvm::Type *PtrTy = llvm::PointerType::getUnqual(Ctx);
+  llvm::Type *Int64Ty = llvm::Type::getInt64Ty(Ctx);
+  llvm::StructType *RecordTy =
+      llvm::StructType::get(Ctx, {PtrTy, PtrTy, Int64Ty});
+  llvm::Type *Params[] = {PtrTy, PtrTy, PtrTy, Int64Ty, Int64Ty, PtrTy};
+  auto *FnTy = llvm::FunctionType::get(llvm::Type::getVoidTy(Ctx), Params,
+                                       /*isVarArg=*/false);
+  auto *Fn = llvm::Function::Create(
+      FnTy, llvm::GlobalValue::InternalLinkage,
+      CGM.getOpenMPRuntime().getName({"omp_iterator_mapper"}), M);
+  Fn->addFnAttr(llvm::Attribute::NoInline);
+  Fn->addFnAttr(llvm::Attribute::NoUnwind);
+  llvm::Value *Handle = Fn->getArg(0);
+  llvm::Value *Records = Fn->getArg(2);
+  llvm::Value *NumIterations = Fn->getArg(3);
+  llvm::Value *MapType = Fn->getArg(4);
+
+  llvm::IRBuilder<> B(llvm::BasicBlock::Create(Ctx, "entry", Fn));
+  llvm::BasicBlock *EntryBB = B.GetInsertBlock();
+  llvm::BasicBlock *BodyBB = llvm::BasicBlock::Create(Ctx, "omp.iter.body", Fn);
+  llvm::BasicBlock *DoneBB = llvm::BasicBlock::Create(Ctx, "omp.iter.done", Fn);
+  const FlagsTy MemberOfMask =
+      static_cast<FlagsTy>(OpenMPOffloadMappingFlags::OMP_MAP_MEMBER_OF);
+  const FlagsTy ToFrom =
+      static_cast<FlagsTy>(OpenMPOffloadMappingFlags::OMP_MAP_TO |
+                           OpenMPOffloadMappingFlags::OMP_MAP_FROM);
+  // Keep the TO and FROM bits of a component that the map type has.
+  llvm::Value *KeepMask = B.CreateOr(B.CreateAnd(MapType, ToFrom), ~ToFrom);
+  llvm::Value *InheritedMemberOf = B.CreateAnd(MapType, MemberOfMask);
+  B.CreateCondBr(B.CreateICmpEQ(NumIterations, B.getInt64(0)), DoneBB, BodyBB);
+
+  B.SetInsertPoint(BodyBB);
+  llvm::PHINode *Iteration = B.CreatePHI(Int64Ty, 2, "omp.iter.idx");
+  Iteration->addIncoming(B.getInt64(0), EntryBB);
+  llvm::FunctionCallee NumComponents = OMPBuilder.getOrCreateRuntimeFunction(
+      M, llvm::omp::OMPRTL___tgt_mapper_num_components);
+  llvm::FunctionCallee PushComponent = OMPBuilder.getOrCreateRuntimeFunction(
+      M, llvm::omp::OMPRTL___tgt_push_mapper_component);
+  llvm::Value *Shift = B.CreateShl(B.CreateCall(NumComponents, {Handle}),
+                                   OMPBuilder.getFlagMemberOffset());
+  unsigned K = IM.Types.size();
+  llvm::Value *First = B.CreateNUWMul(Iteration, B.getInt64(K));
+  bool EmitNames =
+      CGM.getCodeGenOpts().getDebugInfo() != llvm::codegenoptions::NoDebugInfo;
+  for (unsigned J = 0; J < K; ++J) {
+    llvm::Value *Record = B.CreateInBoundsGEP(
+        RecordTy, Records, B.CreateNUWAdd(First, B.getInt64(J)));
+    llvm::Value *Base =
+        B.CreateLoad(PtrTy, B.CreateStructGEP(RecordTy, Record, 0));
+    llvm::Value *Begin =
+        B.CreateLoad(PtrTy, B.CreateStructGEP(RecordTy, Record, 1));
+    llvm::Value *Size =
+        B.CreateLoad(Int64Ty, B.CreateStructGEP(RecordTy, Record, 2));
+    FlagsTy Flags = static_cast<FlagsTy>(IM.Types[J]);
+    llvm::Value *Type = B.getInt64(Flags);
+    if ((Flags & MemberOfMask) == 0)
+      Type = B.CreateOr(Type, InheritedMemberOf);
+    else if ((Flags & MemberOfMask) != MemberOfMask)
+      Type = B.CreateNUWAdd(Type, Shift);
+    Type = B.CreateAnd(Type, KeepMask);
+    llvm::Value *Name =
+        EmitNames ? emitMappingInformation(CGF, OMPBuilder, IM.Exprs[J])
+                  : llvm::Constant::getNullValue(PtrTy);
+    llvm::Value *Args[] = {Handle, Base, Begin, Size, Type, Name};
+    if (IM.Mappers[J])
+      B.CreateCall(CGM.getOpenMPRuntime().getOrCreateUserDefinedMapperFunc(
+                       cast<OMPDeclareMapperDecl>(IM.Mappers[J])),
+                   Args);
+    else
+      B.CreateCall(PushComponent, Args);
+  }
+  llvm::Value *Next = B.CreateNUWAdd(Iteration, B.getInt64(1));
+  Iteration->addIncoming(Next, B.GetInsertBlock());
+  B.CreateCondBr(B.CreateICmpEQ(Next, NumIterations), DoneBB, BodyBB);
+  B.SetInsertPoint(DoneBB);
+  B.CreateRetVoid();
+  IM.MapperFn = Fn;
+  return Fn;
+}
+
+/// The mapper function of entry \p I of \p CombinedInfo, if it has one.
+static llvm::Function *
+getMapperFunction(CodeGenFunction &CGF, llvm::OpenMPIRBuilder &OMPBuilder,
+                  MappableExprsHandler::MapCombinedInfoTy &CombinedInfo,
+                  unsigned I) {
+  if (auto *IM = CombinedInfo.getIteratorMap(I))
+    return emitIteratorMapperFunction(CGF, OMPBuilder, *IM);
+  if (CombinedInfo.Mappers[I])
+    return CGF.CGM.getOpenMPRuntime().getOrCreateUserDefinedMapperFunc(
+        cast<OMPDeclareMapperDecl>(CombinedInfo.Mappers[I]));
+  return nullptr;
+}
+
+/// Free the record buffers of the entries \p Indices of list items with an
+/// iterator modifier, after the runtime calls that used them. \p BasePointers
+/// is the array of base pointers passed to the runtime.
+static void emitIteratorMapCleanup(CodeGenFunction &CGF, Address BasePointers,
+                                   ArrayRef<unsigned> Indices) {
+  // Nothing follows a mandatory offload that failed.
+  if (Indices.empty() || !CGF.HaveInsertPoint() ||
+      CGF.Builder.GetInsertBlock()->hasTerminator())
+    return;
+  llvm::FunctionCallee Free = CGF.CGM.CreateRuntimeFunction(
+      llvm::FunctionType::get(CGF.VoidTy, {CGF.VoidPtrTy}, /*isVarArg=*/false),
+      "free");
+  for (unsigned I : Indices)
+    CGF.EmitNounwindRuntimeCall(
+        Free, {CGF.Builder.CreateLoad(CGF.Builder.CreateConstGEP(
+                  BasePointers.withElementType(CGF.VoidPtrTy), I))});
+}
+
 /// Emit the arrays used to pass the captures and map information to the
 /// offloading runtime library. If there is no map or capture information,
 /// return nullptr by reference.
@@ -10383,8 +10750,6 @@ static void emitOffloadingArraysAndArgs(
     CodeGenFunction &CGF, MappableExprsHandler::MapCombinedInfoTy &CombinedInfo,
     CGOpenMPRuntime::TargetDataInfo &Info, llvm::OpenMPIRBuilder &OMPBuilder,
     bool IsNonContiguous = false, bool ForEndCall = false) {
-  CodeGenModule &CGM = CGF.CGM;
-
   using InsertPointTy = llvm::OpenMPIRBuilder::InsertPointTy;
   InsertPointTy AllocaIP(CGF.AllocaInsertPt->getParent(),
                          CGF.AllocaInsertPt->getIterator());
@@ -10398,12 +10763,9 @@ static void emitOffloadingArraysAndArgs(
   };
 
   auto CustomMapperCB = [&](unsigned int I) {
-    llvm::Function *MFunc = nullptr;
-    if (CombinedInfo.Mappers[I]) {
+    llvm::Function *MFunc = getMapperFunction(CGF, OMPBuilder, CombinedInfo, I);
+    if (MFunc)
       Info.HasMapper = true;
-      MFunc = CGM.getOpenMPRuntime().getOrCreateUserDefinedMapperFunc(
-          cast<OMPDeclareMapperDecl>(CombinedInfo.Mappers[I]));
-    }
     return MFunc;
   };
   cantFail(OMPBuilder.emitOffloadingArraysAndArgs(
@@ -10845,6 +11207,7 @@ genMapInfo(MappableExprsHandler &MEHandler, CodeGenFunction &CGF,
   // Map any list items in a map clause that were not captures because they
   // weren't referenced within the construct.
   MEHandler.generateAllInfo(CombinedInfo, OMPBuilder, SkippedVarSet);
+  MEHandler.generateInfoForIteratorMaps(CombinedInfo, OMPBuilder);
 
   auto FillInfoMap = [&](MappableExprsHandler::MappingExprInfo &MapExpr) {
     return emitMappingInformation(CGF, OMPBuilder, MapExpr);
@@ -10936,11 +11299,14 @@ static void emitTargetCallKernelLaunch(
       Address(Info.RTArgs.MappersArray, CGF.VoidPtrTy, CGM.getPointerAlign());
   MapTypesArray = Info.RTArgs.MapTypesArray;
   MapNamesArray = Info.RTArgs.MapNamesArray;
+  SmallVector<unsigned, 1> IteratorMapIndices =
+      CombinedInfo.getIteratorMapIndices();
 
   auto &&ThenGen = [&OMPRuntime, OutlinedFn, &D, &CapturedVars,
                     RequiresOuterTask, &CS, OffloadingMandatory, Device,
                     OutlinedFnID, &InputInfo, &MapTypesArray, &MapNamesArray,
-                    SizeEmitter](CodeGenFunction &CGF, PrePostActionTy &) {
+                    SizeEmitter, &IteratorMapIndices](CodeGenFunction &CGF,
+                                                      PrePostActionTy &) {
     bool IsReverseOffloading = Device.getInt() == OMPC_DEVICE_ancestor;
 
     if (IsReverseOffloading) {
@@ -10950,6 +11316,8 @@ static void emitTargetCallKernelLaunch(
       // assert here and ensure SEMA emits an error.
       emitTargetCallFallback(OMPRuntime, OutlinedFn, D, CapturedVars,
                              RequiresOuterTask, CS, OffloadingMandatory, CGF);
+      emitIteratorMapCleanup(CGF, InputInfo.BasePointersArray,
+                             IteratorMapIndices);
       return;
     }
 
@@ -11007,6 +11375,9 @@ static void emitTargetCallKernelLaunch(
             CGF.Builder, OutlinedFnID, EmitTargetCallFallbackCB, Args, DeviceID,
             RTLoc, AllocaIP));
     CGF.Builder.restoreIP(AfterIP);
+    // In the target task, if any, as are the arrays.
+    emitIteratorMapCleanup(CGF, InputInfo.BasePointersArray,
+                           IteratorMapIndices);
   };
 
   if (RequiresOuterTask)
@@ -11640,6 +12011,10 @@ void CGOpenMPRuntime::emitTargetDataCalls(
     // Get map clause information.
     MappableExprsHandler MEHandler(D, CGF);
     MEHandler.generateAllInfo(CombinedInfo, OMPBuilder);
+    MEHandler.generateInfoForIteratorMaps(CombinedInfo, OMPBuilder);
+    // The loops over iterators end in a new block, where createTargetData
+    // goes on.
+    OMPBuilder.Builder.restoreIP(CGF.Builder.saveIP());
 
     auto FillInfoMap = [&](MappableExprsHandler::MappingExprInfo &MapExpr) {
       return emitMappingInformation(CGF, OMPBuilder, MapExpr);
@@ -11685,12 +12060,9 @@ void CGOpenMPRuntime::emitTargetDataCalls(
   };
 
   auto CustomMapperCB = [&](unsigned int I) {
-    llvm::Function *MFunc = nullptr;
-    if (CombinedInfo.Mappers[I]) {
+    llvm::Function *MFunc = getMapperFunction(CGF, OMPBuilder, CombinedInfo, I);
+    if (MFunc)
       Info.HasMapper = true;
-      MFunc = CGF.CGM.getOpenMPRuntime().getOrCreateUserDefinedMapperFunc(
-          cast<OMPDeclareMapperDecl>(CombinedInfo.Mappers[I]));
-    }
     return MFunc;
   };
 
@@ -11708,6 +12080,25 @@ void CGOpenMPRuntime::emitTargetDataCalls(
           IfCondVal, Info, GenMapInfoCB, CustomMapperCB,
           /*MapperFunc=*/nullptr, BodyCB, DeviceAddrCB, RTLoc));
   CGF.Builder.restoreIP(AfterIP);
+
+  // After the end of the region: the base pointers array is the one of the
+  // begin and end calls, which ran only if the if clause was true.
+  SmallVector<unsigned, 1> IteratorMapIndices =
+      CombinedInfo.getIteratorMapIndices();
+  if (!IteratorMapIndices.empty() && CGF.HaveInsertPoint()) {
+    Address BasePointers(Info.RTArgs.BasePointersArray, CGF.VoidPtrTy,
+                         CGM.getPointerAlign());
+    llvm::BasicBlock *ContBB = nullptr;
+    if (IfCondVal) {
+      llvm::BasicBlock *FreeBB = CGF.createBasicBlock("omp.iter.map.free");
+      ContBB = CGF.createBasicBlock("omp.iter.map.cont");
+      CGF.Builder.CreateCondBr(IfCondVal, FreeBB, ContBB);
+      CGF.EmitBlock(FreeBB);
+    }
+    emitIteratorMapCleanup(CGF, BasePointers, IteratorMapIndices);
+    if (ContBB)
+      CGF.EmitBlock(ContBB);
+  }
 }
 
 void CGOpenMPRuntime::emitTargetDataStandAloneCall(
@@ -11724,9 +12115,11 @@ void CGOpenMPRuntime::emitTargetDataStandAloneCall(
   CodeGenFunction::OMPTargetDataInfo InputInfo;
   llvm::Value *MapTypesArray = nullptr;
   llvm::Value *MapNamesArray = nullptr;
+  SmallVector<unsigned, 1> IteratorMapIndices;
   // Generate the code for the opening of the data environment.
   auto &&ThenGen = [this, &D, Device, &InputInfo, &MapTypesArray,
-                    &MapNamesArray](CodeGenFunction &CGF, PrePostActionTy &) {
+                    &MapNamesArray, &IteratorMapIndices](CodeGenFunction &CGF,
+                                                         PrePostActionTy &) {
     // Emit device ID if any.
     llvm::Value *DeviceID = nullptr;
     if (Device) {
@@ -11846,11 +12239,14 @@ void CGOpenMPRuntime::emitTargetDataStandAloneCall(
     CGF.EmitRuntimeCall(
         OMPBuilder.getOrCreateRuntimeFunction(CGM.getModule(), RTLFn),
         OffloadingArgs);
+    // In the target task, if any, as are the arrays.
+    emitIteratorMapCleanup(CGF, InputInfo.BasePointersArray,
+                           IteratorMapIndices);
   };
 
   auto &&TargetThenGen = [this, &ThenGen, &D, &InputInfo, &MapTypesArray,
-                          &MapNamesArray](CodeGenFunction &CGF,
-                                          PrePostActionTy &) {
+                          &MapNamesArray, &IteratorMapIndices](
+                             CodeGenFunction &CGF, PrePostActionTy &) {
     // Fill up the arrays with all the mapped variables.
     MappableExprsHandler::MapCombinedInfoTy CombinedInfo;
     CGOpenMPRuntime::TargetDataInfo Info;
@@ -11858,6 +12254,7 @@ void CGOpenMPRuntime::emitTargetDataStandAloneCall(
     genMapInfo(MEHandler, CGF, CombinedInfo, OMPBuilder);
     emitOffloadingArraysAndArgs(CGF, CombinedInfo, Info, OMPBuilder,
                                 /*IsNonContiguous=*/true, /*ForEndCall=*/false);
+    IteratorMapIndices = CombinedInfo.getIteratorMapIndices();
 
     bool RequiresOuterTask = D.hasClausesOfKind<OMPDependClause>() ||
                              D.hasClausesOfKind<OMPNowaitClause>();
