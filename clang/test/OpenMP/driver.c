@@ -12,10 +12,20 @@
 // CHECK-NO-TLS-SAME: -fnoopenmp-use-tls
 //
 // RUN: %clang %s -c -E -dM -fopenmp=libomp | FileCheck --check-prefix=CHECK-DEFAULT-VERSION %s
-// RUN: %clang %s -c -E -dM -fopenmp=libomp -fopenmp-version=1 | FileCheck --check-prefix=CHECK-DEFAULT-VERSION %s
-// RUN: %clang %s -c -E -dM -fopenmp=libomp -fopenmp-version=0 | FileCheck --check-prefix=CHECK-DEFAULT-VERSION %s
-// RUN: %clang %s -c -E -dM -fopenmp=libomp -fopenmp-version=100 | FileCheck --check-prefix=CHECK-DEFAULT-VERSION %s
 // RUN: %clang %s -c -E -dM -fopenmp=libomp -fopenmp-version=60 | FileCheck --check-prefix=CHECK-60-VERSION %s
+
+// A version that clang does not know is an error, not the default version.
+// RUN: not %clang %s -c -E -dM -fopenmp=libomp -fopenmp-version=1 2>&1 | FileCheck --check-prefix=CHECK-BAD-1 %s
+// RUN: not %clang %s -c -E -dM -fopenmp=libomp -fopenmp-version=0 2>&1 | FileCheck --check-prefix=CHECK-BAD-0 %s
+// RUN: not %clang %s -c -E -dM -fopenmp=libomp -fopenmp-version=100 2>&1 | FileCheck --check-prefix=CHECK-BAD-100 %s
+// RUN: not %clang %s -c -E -dM -fopenmp=libomp -fopenmp-version=5.1 2>&1 | FileCheck --check-prefix=CHECK-BAD-DOT %s
+// RUN: not %clang %s -c -E -dM -fopenmp-simd -fopenmp-version=1 2>&1 | FileCheck --check-prefix=CHECK-BAD-1 %s
+// RUN: not %clang %s -c -E -dM -fopenmp-simd -fopenmp-version=0 2>&1 | FileCheck --check-prefix=CHECK-BAD-0 %s
+// RUN: not %clang %s -c -E -dM -fopenmp-simd -fopenmp-version=100 2>&1 | FileCheck --check-prefix=CHECK-BAD-100 %s
+// CHECK-BAD-1: error: invalid value '1' in '-fopenmp-version=1', expected one of: 31, 40, 45, 50, 51, 52, 60, 61
+// CHECK-BAD-0: error: invalid value '0' in '-fopenmp-version=0', expected one of: 31, 40, 45, 50, 51, 52, 60, 61
+// CHECK-BAD-100: error: invalid value '100' in '-fopenmp-version=100', expected one of: 31, 40, 45, 50, 51, 52, 60, 61
+// CHECK-BAD-DOT: error: invalid value '5.1' in '-fopenmp-version=5.1', expected one of: 31, 40, 45, 50, 51, 52, 60, 61
 // RUN: %clang %s -c -E -dM -fopenmp=libomp | FileCheck --check-prefix=CHECK-DEFAULT-VERSION %s
 
 // CHECK-DEFAULT-VERSION: #define _OPENMP 202011
@@ -53,9 +63,6 @@
 // RUN: %clang %s -c -E -dM -fopenmp-version=45 | FileCheck --check-prefix=CHECK-VERSION %s
 // RUN: %clang %s -c -E -dM -fopenmp-simd -fno-openmp-simd -fopenmp-version=45 | FileCheck --check-prefix=CHECK-VERSION %s
 // RUN: %clang %s -c -E -dM -fopenmp-simd | FileCheck --check-prefix=CHECK-VERSION %s
-// RUN: %clang %s -c -E -dM -fopenmp-simd -fopenmp-version=1 | FileCheck --check-prefix=CHECK-VERSION %s
-// RUN: %clang %s -c -E -dM -fopenmp-simd -fopenmp-version=0 | FileCheck --check-prefix=CHECK-VERSION %s
-// RUN: %clang %s -c -E -dM -fopenmp-simd -fopenmp-version=100 | FileCheck --check-prefix=CHECK-VERSION %s
 // RUN: %clang %s -c -E -dM -fopenmp-simd -fopenmp-version=31 | FileCheck --check-prefix=CHECK-VERSION %s
 // RUN: %clang %s -c -E -dM -fopenmp-simd -fopenmp-version=40 | FileCheck --check-prefix=CHECK-VERSION %s
 // RUN: %clang %s -c -E -dM -fopenmp-simd -fopenmp-version=45 | FileCheck --check-prefix=CHECK-VERSION %s
