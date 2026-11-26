@@ -26,6 +26,13 @@
 // CHECK-BAD-0: error: invalid value '0' in '-fopenmp-version=0', expected one of: 31, 40, 45, 50, 51, 52, 60, 61
 // CHECK-BAD-100: error: invalid value '100' in '-fopenmp-version=100', expected one of: 31, 40, 45, 50, 51, 52, 60, 61
 // CHECK-BAD-DOT: error: invalid value '5.1' in '-fopenmp-version=5.1', expected one of: 31, 40, 45, 50, 51, 52, 60, 61
+// Only the decimal spellings: the frontend would read 061 as octal 49.
+// RUN: not %clang %s -c -E -dM -fopenmp=libomp -fopenmp-version=061 2>&1 | FileCheck --check-prefix=CHECK-BAD-OCT %s
+// RUN: not %clang %s -c -E -dM -fopenmp=libomp -fopenmp-version=0x3d 2>&1 | FileCheck --check-prefix=CHECK-BAD-HEX %s
+// RUN: not %clang %s -c -E -dM -fopenmp=libomp -fopenmp-version=+52 2>&1 | FileCheck --check-prefix=CHECK-BAD-PLUS %s
+// CHECK-BAD-OCT: error: invalid value '061' in '-fopenmp-version=061', expected one of: 31, 40, 45, 50, 51, 52, 60, 61
+// CHECK-BAD-HEX: error: invalid value '0x3d' in '-fopenmp-version=0x3d', expected one of: 31, 40, 45, 50, 51, 52, 60, 61
+// CHECK-BAD-PLUS: error: invalid value '+52' in '-fopenmp-version=+52', expected one of: 31, 40, 45, 50, 51, 52, 60, 61
 // RUN: %clang %s -c -E -dM -fopenmp=libomp | FileCheck --check-prefix=CHECK-DEFAULT-VERSION %s
 
 // CHECK-DEFAULT-VERSION: #define _OPENMP 202011

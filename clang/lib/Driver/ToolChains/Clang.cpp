@@ -5140,15 +5140,16 @@ static void ProcessVSRuntimeLibrary(const ToolChain &TC, const ArgList &Args,
 /// Diagnose an -fopenmp-version that is not one of the OpenMP versions that
 /// clang knows. The frontend would apply the rules of whatever number it is
 /// given while _OPENMP fell back to the default version, so such a program
-/// would be compiled for no version of the specification.
+/// would be compiled for no version of the specification. Only the decimal
+/// spellings are taken: the frontend reads 061 as an octal number, 49.
 static void checkOpenMPVersion(const Driver &D, const ArgList &Args) {
   const Arg *A = Args.getLastArg(options::OPT_fopenmp_version_EQ);
   if (!A)
     return;
   ArrayRef<unsigned> Versions = llvm::omp::getOpenMPVersions();
-  unsigned Version = 0;
-  if (!StringRef(A->getValue()).getAsInteger(10, Version) &&
-      llvm::is_contained(Versions, Version))
+  StringRef Value = A->getValue();
+  if (llvm::any_of(Versions,
+                   [&](unsigned V) { return Value == std::to_string(V); }))
     return;
   std::string Expected;
   llvm::raw_string_ostream OS(Expected);
