@@ -25,6 +25,7 @@
 #include "OpenMP/OMPT/Callback.h"
 #include "PluginInterface.h"
 #include "Utils/ELF.h"
+#include "Utils/PTX.h"
 
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/BinaryFormat/ELF.h"
@@ -53,6 +54,25 @@ struct CUDAKernelTy;
 struct CUDADeviceTy;
 struct CUDAPluginTy;
 
+#ifdef __APPLE__
+// CuMetal cannot find a kernel whose name starts with "__" (its Metal function is emitted as "cm___..." and the
+// lookup misses it), and every OpenMP kernel is called __omp_offloading_*. The module handed to CuMetal therefore uses
+// _omp_offloading_*, and the names the runtime asks for are mapped the same way.
+static std::string cuMetalSymbolName(llvm::StringRef Name) {
+  if (Name.starts_with("__omp_offloading_"))
+    return Name.drop_front(1).str();
+  return Name.str();
+}
+
+static std::string cuMetalImageText(llvm::StringRef Image) {
+  std::string Text = Image.str();
+  const std::string From = "__omp_offloading_", To = "_omp_offloading_";
+  for (size_t Pos = Text.find(From); Pos != std::string::npos; Pos = Text.find(From, Pos + To.size()))
+    Text.replace(Pos, From.size(), To);
+  return Text;
+}
+#endif
+
 /// Class implementing the CUDA device images properties.
 struct CUDADeviceImageTy : public DeviceImageTy {
   /// Create the CUDA image with the id and the target image pointer.
@@ -64,7 +84,12 @@ struct CUDADeviceImageTy : public DeviceImageTy {
   Error loadModule() {
     assert(!Module && "Module already loaded");
 
+#ifdef __APPLE__
+    std::string Renamed = cuMetalImageText(getMemoryBuffer().getBuffer());
+    CUresult Res = cuModuleLoadDataEx(&Module, Renamed.c_str(), 0, nullptr, nullptr);
+#else
     CUresult Res = cuModuleLoadDataEx(&Module, getStart(), 0, nullptr, nullptr);
+#endif
     if (auto Err = Plugin::check(Res, "error in cuModuleLoadDataEx: %s"))
       return Err;
 
@@ -105,7 +130,11 @@ struct CUDAKernelTy : public GenericKernelTy {
     CUDADeviceImageTy &CUDAImage = static_cast<CUDADeviceImageTy &>(Image);
 
     // Retrieve the function pointer of the kernel.
+#ifdef __APPLE__
+    Res = cuModuleGetFunction(&Func, CUDAImage.getModule(), cuMetalSymbolName(getName()).c_str());
+#else
     Res = cuModuleGetFunction(&Func, CUDAImage.getModule(), getName());
+#endif
     if (auto Err = Plugin::check(Res, "error in cuModuleGetFunction('%s'): %s",
                                  getName()))
       return Err;
@@ -118,6 +147,13 @@ struct CUDAKernelTy : public GenericKernelTy {
     int MaxThreads;
     Res = cuFuncGetAttribute(&MaxThreads,
                              CU_FUNC_ATTRIBUTE_MAX_THREADS_PER_BLOCK, Func);
+#ifdef __APPLE__
+    // CuMetal does not report every function attribute: the kernel environment already limits the thread count
+    if (Res != CUDA_SUCCESS) {
+      MaxThreads = 1024;
+      Res = CUDA_SUCCESS;
+    }
+#endif
     if (auto Err = Plugin::check(Res, "error in cuFuncGetAttribute: %s"))
       return Err;
 
@@ -127,6 +163,12 @@ struct CUDAKernelTy : public GenericKernelTy {
     int SharedMemSize;
     Res = cuFuncGetAttribute(&SharedMemSize,
                              CU_FUNC_ATTRIBUTE_SHARED_SIZE_BYTES, Func);
+#ifdef __APPLE__
+    if (Res != CUDA_SUCCESS) {
+      SharedMemSize = 0;
+      Res = CUDA_SUCCESS;
+    }
+#endif
     if (auto Err = Plugin::check(Res, "Error in cuFuncGetAttribute: %s"))
       return Err;
 
@@ -363,8 +405,15 @@ struct CUDADeviceTy : public GenericDeviceTy {
       return Err;
     if (auto Err =
             getDeviceAttr(CU_DEVICE_ATTRIBUTE_MAX_THREADS_PER_MULTIPROCESSOR,
-                          MaxThreadsPerSM))
+                          MaxThreadsPerSM)) {
+#ifdef __APPLE__
+      // CuMetal does not report this attribute: assume one 1024-thread block per multiprocessor
+      consumeError(std::move(Err));
+      MaxThreadsPerSM = 1024;
+#else
       return Err;
+#endif
+    }
     if (auto Err = getDeviceAttr(CU_DEVICE_ATTRIBUTE_WARP_SIZE, WarpSize))
       return Err;
     HardwareParallelism = NumMuliprocessors * (MaxThreadsPerSM / WarpSize);
@@ -1357,7 +1406,10 @@ struct CUDADeviceTy : public GenericDeviceTy {
     return setCtxLimit(CU_LIMIT_MALLOC_HEAP_SIZE, Value);
   }
   Error getDeviceMemorySize(uint64_t &Value) override {
-    CUresult Res = cuDeviceTotalMem(&Value, Device);
+    // macOS: uint64_t is unsigned long long there, not the size_t the driver API takes
+    size_t Size = 0;
+    CUresult Res = cuDeviceTotalMem(&Size, Device);
+    Value = Size;
     return Plugin::check(Res, "error in getDeviceMemorySize %s");
   }
 
@@ -1367,7 +1419,9 @@ struct CUDADeviceTy : public GenericDeviceTy {
     return Plugin::check(Res, "error in cuCtxSetLimit: %s");
   }
   Error getCtxLimit(CUlimit Kind, uint64_t &Value) {
-    CUresult Res = cuCtxGetLimit(&Value, Kind);
+    size_t Size = 0;
+    CUresult Res = cuCtxGetLimit(&Size, Kind);
+    Value = Size;
     return Plugin::check(Res, "error in cuCtxGetLimit: %s");
   }
 
@@ -1565,6 +1619,12 @@ Error CUDAKernelTy::launchImpl(GenericDeviceTy &GenericDevice,
                                  DynBlockMemSize, Stream,
                                  &CoopAttr,       1};
 
+#ifdef __APPLE__
+  // CuMetal's cuLaunchKernelEx rejects every launch attribute except IGNORE, even a cooperative flag of 0
+  if (!KernelArgs.Flags.Cooperative)
+    LaunchConfig.numAttrs = 0;
+#endif
+
   CUresult Res = cuLaunchKernelEx(&LaunchConfig, Func, LaunchParams.Args,
                                   /*extra=*/nullptr);
 
@@ -1638,7 +1698,12 @@ public:
                                     GlobalTy &DeviceGlobal) override {
     CUDADeviceImageTy &CUDAImage = static_cast<CUDADeviceImageTy &>(Image);
 
+#ifdef __APPLE__
+    std::string MappedName = cuMetalSymbolName(DeviceGlobal.getName());
+    const char *GlobalName = MappedName.c_str();
+#else
     const char *GlobalName = DeviceGlobal.getName().data();
+#endif
 
     size_t CUSize;
     CUdeviceptr CUPtr;
@@ -1740,6 +1805,47 @@ struct CUDAPluginTy final : public GenericPluginTy {
   }
 
   const char *getName() const override { return GETNAME(TARGET_NAME); }
+
+  /// `#pragma omp interop use(obj)` waits for the interop object's stream. The base class reports these barriers as
+  /// unsupported, which made every `use` on a CUDA device fatal ("sync_barrier not supported").
+  Error syncBarrierImpl(omp_interop_val_t *Interop) override {
+    if (!Interop || !Interop->async_info || !Interop->async_info->Queue)
+      return Plugin::success();
+    CUresult Res = cuStreamSynchronize(reinterpret_cast<CUstream>(Interop->async_info->Queue));
+    return Plugin::check(Res, "error in cuStreamSynchronize: %s");
+  }
+
+  /// A CUDA stream executes in order, so queuing a barrier behind the work already in it adds nothing.
+  Error asyncBarrierImpl(omp_interop_val_t *Interop) override { return Plugin::success(); }
+
+  /// PTX text image (macOS/CuMetal port, see Utils/PTX.h): accepted when it is PTX at all, and for a device when the
+  /// device's compute capability is at least the image's `.target` (PTX is forward compatible).
+  Expected<bool> isImageCompatible(StringRef Image) const override {
+    return utils::ptx::isPTX(Image);
+  }
+
+  Expected<bool> isImageCompatible(uint32_t DeviceId, StringRef Image) const override {
+    if (!utils::ptx::isPTX(Image))
+      return false;
+    std::optional<unsigned> SM = utils::ptx::getTargetSM(Image);
+    if (!SM)
+      return false;
+
+    CUdevice Device;
+    CUresult Res = cuDeviceGet(&Device, DeviceId);
+    if (auto Err = Plugin::check(Res, "error in cuDeviceGet: %s"))
+      return std::move(Err);
+
+    int32_t Major, Minor;
+    Res = cuDeviceGetAttribute(&Major, CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MAJOR, Device);
+    if (auto Err = Plugin::check(Res, "error in cuDeviceGetAttribute: %s"))
+      return std::move(Err);
+    Res = cuDeviceGetAttribute(&Minor, CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MINOR, Device);
+    if (auto Err = Plugin::check(Res, "error in cuDeviceGetAttribute: %s"))
+      return std::move(Err);
+
+    return static_cast<unsigned>(Major * 10 + Minor) >= *SM;
+  }
 
   /// Check whether the image is compatible with a CUDA device.
   Expected<bool> isELFCompatible(uint32_t DeviceId,

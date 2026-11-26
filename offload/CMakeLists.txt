@@ -24,8 +24,8 @@ if(MSVC)
 endif()
 
 # Check that the library can actually be built.
-if(APPLE OR WASM)
-  message(WARNING "libomptarget cannot be built on MacOS X and WASM!")
+if(WASM)
+  message(WARNING "libomptarget cannot be built on WASM!")
   return()
 elseif("${LLVM_DEFAULT_TARGET_TRIPLE}" MATCHES "^(amdgcn|nvptx|spirv)" OR
        "${CMAKE_CXX_COMPILER_TARGET}" MATCHES "^(amdgcn|nvptx|spirv)")
@@ -178,7 +178,8 @@ if(NOT (CMAKE_SYSTEM_PROCESSOR MATCHES "(x86_64)|(ppc64le)|(aarch64)$"
                    "Linux x86_64, ppc64le, or aarch64 hosts")
     list(REMOVE_ITEM LIBOMPTARGET_PLUGINS_TO_BUILD "amdgpu")
   endif()
-  if("cuda" IN_LIST LIBOMPTARGET_PLUGINS_TO_BUILD)
+  # macOS port: the CUDA plugin also builds on Apple Silicon, where its dlopen()ed "libcuda" is CuMetal
+  if("cuda" IN_LIST LIBOMPTARGET_PLUGINS_TO_BUILD AND NOT APPLE)
     message(STATUS "Not building CUDA plugin: only support CUDA in "
                    "Linux x86_64, ppc64le, or aarch64 hosts")
     list(REMOVE_ITEM LIBOMPTARGET_PLUGINS_TO_BUILD "cuda")

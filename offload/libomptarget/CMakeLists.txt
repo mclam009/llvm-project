@@ -1,7 +1,13 @@
 message(STATUS "Building offloading runtime library libomptarget.")
 
 if(NOT TARGET "omp")
-  message(FATAL_ERROR "Error: omp target dependency of libomptarget not found. Please ensure 'openmp' is on LLVM_ENABLE_RUNTIMES list.")
+  # macOS port: link the libomp that ships with the toolchain (OMP_RUNTIME_LIBRARY) instead of building a
+  # second copy, so a program has exactly one OpenMP runtime
+  if(NOT OMP_RUNTIME_LIBRARY)
+    message(FATAL_ERROR "Error: omp target dependency of libomptarget not found. Please ensure 'openmp' is on LLVM_ENABLE_RUNTIMES list or set OMP_RUNTIME_LIBRARY.")
+  endif()
+  add_library(omp SHARED IMPORTED)
+  set_target_properties(omp PROPERTIES IMPORTED_LOCATION "${OMP_RUNTIME_LIBRARY}")
 endif()
 
 add_library(omptarget SHARED

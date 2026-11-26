@@ -153,6 +153,32 @@ __tgt_bin_desc *PluginManager::upgradeLegacyEntries(__tgt_bin_desc *Desc) {
   if (UpgradedDescriptors.contains(Desc))
     return &UpgradedDescriptors[Desc];
 
+  // macOS port: the Mach-O linker gives the zero-length dummy atom at the end of the entry section one byte plus
+  // alignment, so the section is not a whole number of entries: ignore the remainder instead of reading a bogus entry.
+  if (Desc->HostEntriesBegin != Desc->HostEntriesEnd &&
+      Desc->HostEntriesBegin->Reserved == 0) {
+    const size_t Bytes = reinterpret_cast<const char *>(Desc->HostEntriesEnd) -
+                         reinterpret_cast<const char *>(Desc->HostEntriesBegin);
+    llvm::offloading::EntryTy *WholeEnd =
+        Desc->HostEntriesBegin + Bytes / sizeof(llvm::offloading::EntryTy);
+    if (WholeEnd != Desc->HostEntriesEnd) {
+      llvm::SmallVector<__tgt_device_image, 0> &TrimmedImages =
+          LegacyImages.emplace_back();
+      for (int32_t Image = 0; Image < Desc->NumDeviceImages; ++Image)
+        TrimmedImages.emplace_back(
+            __tgt_device_image{Desc->DeviceImages[Image].ImageStart,
+                               Desc->DeviceImages[Image].ImageEnd,
+                               Desc->DeviceImages[Image].EntriesBegin,
+                               WholeEnd});
+      __tgt_bin_desc &TrimmedDesc = UpgradedDescriptors[Desc];
+      TrimmedDesc.DeviceImages = TrimmedImages.begin();
+      TrimmedDesc.NumDeviceImages = Desc->NumDeviceImages;
+      TrimmedDesc.HostEntriesBegin = Desc->HostEntriesBegin;
+      TrimmedDesc.HostEntriesEnd = WholeEnd;
+      return &TrimmedDesc;
+    }
+  }
+
   if (Desc->HostEntriesBegin == Desc->HostEntriesEnd ||
       Desc->HostEntriesBegin->Reserved == 0)
     return Desc;

@@ -42,7 +42,23 @@ enum MemScopeTy {
 template <typename Ty, typename V = utils::remove_addrspace_t<Ty>>
 V inc(Ty *Address, V Val, atomic::OrderingTy Ordering,
       MemScopeTy MemScope = MemScopeTy::device) {
+#ifdef OMPTARGET_DEVICE_NO_ATOMIC_INC
+  // macOS port: CuMetal has no atom.inc (the wrapping increment), so build it from a compare-and-swap loop
+  // The counter is in global memory but reached through a generic pointer; CuMetal only lowers scoped atomics on
+  // memory it can prove is global, so cast explicitly (cvta.to.global).
+  __attribute__((address_space(1))) V *Global = (__attribute__((address_space(1))) V *)Address;
+  // Metal atomics are relaxed only, so the ordering comes from fences around a relaxed CAS loop.
+  __scoped_atomic_thread_fence(Ordering, MemScope);
+  V Old = __scoped_atomic_load_n(Global, atomic::relaxed, MemScope);
+  V New;
+  do {
+    New = Old >= Val ? V(0) : V(Old + 1);
+  } while (!__scoped_atomic_compare_exchange_n(Global, &Old, New, false, atomic::relaxed, atomic::relaxed, MemScope));
+  __scoped_atomic_thread_fence(Ordering, MemScope);
+  return Old;
+#else
   return __scoped_atomic_fetch_uinc(Address, Val, Ordering, MemScope);
+#endif
 }
 
 template <typename Ty, typename V = utils::remove_addrspace_t<Ty>>

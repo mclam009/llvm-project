@@ -1,6 +1,8 @@
 // RUN: %libomptarget-compile-run-and-check-generic
 
-// XFAIL: !intelgpu
+// The CUDA plugin implements the barriers of 'interop use' (offload/test/offloading/interop_use.c); the other targets,
+// except Intel GPUs, do not.
+// XFAIL: !(intelgpu || nvidiagpu)
 
 #include <assert.h>
 #include <omp.h>

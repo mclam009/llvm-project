@@ -1253,6 +1253,9 @@ searchLibraryBaseName(StringRef Name, StringRef Root,
             findFile(Dir, Root, "lib" + Name + ".so"))
       return File;
     if (std::optional<std::string> File =
+            findFile(Dir, Root, "lib" + Name + ".dylib"))
+      return File;
+    if (std::optional<std::string> File =
             findFile(Dir, Root, "lib" + Name + ".a"))
       return File;
   }
@@ -1340,6 +1343,8 @@ getDeviceInput(const ArgList &Args) {
     return SmallVector<SmallVector<OffloadFile>>();
 
   StringRef Root = Args.getLastArgValue(OPT_sysroot_EQ);
+  const bool IsMachOHost =
+      Triple(Args.getLastArgValue(OPT_host_triple_EQ)).isOSBinFormatMachO();
   SmallVector<StringRef> LibraryPaths;
   for (const opt::Arg *Arg : Args.filtered(OPT_library_path, OPT_libpath))
     LibraryPaths.push_back(Arg->getValue());
@@ -1365,6 +1370,10 @@ getDeviceInput(const ArgList &Args) {
             ? searchLibrary(Arg->getValue(), Root, LibraryPaths)
             : std::string(Arg->getValue());
 
+    // macOS port: Darwin links against SDK stubs (.tbd, e.g. -lSystem, -lc++) that this search does not know and that
+    // carry no device code, so a library that is not found is not an error there
+    if (!Filename && Arg->getOption().matches(OPT_library) && IsMachOHost)
+      continue;
     if (!Filename && Arg->getOption().matches(OPT_library))
       return createStringError("unable to find library -l%s", Arg->getValue());
 
@@ -1378,7 +1387,8 @@ getDeviceInput(const ArgList &Args) {
       return createFileError(*Filename, EC);
 
     MemoryBufferRef Buffer = **BufferOrErr;
-    if (identify_magic(Buffer.getBuffer()) == file_magic::elf_shared_object)
+    if (identify_magic(Buffer.getBuffer()) == file_magic::elf_shared_object ||
+        identify_magic(Buffer.getBuffer()) == file_magic::macho_dynamically_linked_shared_lib)
       continue;
 
     SmallVector<OffloadFile> Binaries;

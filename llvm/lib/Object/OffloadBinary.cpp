@@ -19,6 +19,7 @@
 #include "llvm/Object/ELFObjectFile.h"
 #include "llvm/Object/Error.h"
 #include "llvm/Object/IRObjectFile.h"
+#include "llvm/Object/MachO.h"
 #include "llvm/Object/ObjectFile.h"
 #include "llvm/Support/Alignment.h"
 #include "llvm/Support/SourceMgr.h"
@@ -97,9 +98,20 @@ Error extractOffloadFiles(MemoryBufferRef Contents,
 // Extract offloading binaries from an Object file \p Obj.
 Error extractFromObject(const ObjectFile &Obj,
                         SmallVectorImpl<OffloadFile> &Binaries) {
-  assert((Obj.isELF() || Obj.isCOFF()) && "Invalid file type");
+  assert((Obj.isELF() || Obj.isCOFF() || Obj.isMachO()) && "Invalid file type");
 
   for (SectionRef Sec : Obj.sections()) {
+    // Mach-O has neither section types nor dotted names: the section is __LLVM,__offloading (macOS port).
+    if (Obj.isMachO()) {
+      const auto &MachO = static_cast<const MachOObjectFile &>(Obj);
+      Expected<StringRef> NameOrErr = Sec.getName();
+      if (!NameOrErr)
+        return NameOrErr.takeError();
+      if (MachO.getSectionFinalSegmentName(Sec.getRawDataRefImpl()) != "__LLVM" ||
+          !NameOrErr->starts_with("__offload"))
+        continue;
+    }
+
     // ELF files contain a section with the LLVM_OFFLOADING type.
     if (Obj.isELF() &&
         static_cast<ELFSectionRef>(Sec).getType() != ELF::SHT_LLVM_OFFLOADING)
@@ -149,7 +161,8 @@ Error extractFromBitcode(MemoryBufferRef Buffer,
       continue;
 
     MDString *SectionID = dyn_cast<MDString>(Op->getOperand(1));
-    if (!SectionID || SectionID->getString() != ".llvm.offloading")
+    if (!SectionID || (SectionID->getString() != ".llvm.offloading" &&
+                       SectionID->getString() != "__LLVM,__offloading"))
       continue;
 
     GlobalVariable *GV =
@@ -371,6 +384,7 @@ Error object::extractOffloadBinaries(MemoryBufferRef Buffer,
   case file_magic::elf_relocatable:
   case file_magic::elf_executable:
   case file_magic::elf_shared_object:
+  case file_magic::macho_object:
   case file_magic::coff_object: {
     Expected<std::unique_ptr<ObjectFile>> ObjFile =
         ObjectFile::createObjectFile(Buffer, Type);

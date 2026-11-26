@@ -58,7 +58,10 @@ offloading::getOffloadingEntryInitializer(Module &M, object::OffloadKind Kind,
   auto *Str =
       new GlobalVariable(M, AddrName->getType(), /*isConstant=*/true,
                          GlobalValue::InternalLinkage, AddrName, Prefix);
-  StringRef SectionName = ".llvm.rodata.offloading";
+  // Mach-O section names need a "segment,section" pair; the ELF-style name made every host compile of an offloading
+  // program fail there (macOS port, see docs/bug-reports/llvm-offload-macos-wip.patch)
+  StringRef SectionName =
+      Triple.isOSBinFormatMachO() ? "__DATA,offload_names" : ".llvm.rodata.offloading";
   Str->setUnnamedAddr(GlobalValue::UnnamedAddr::Global);
   Str->setSection(SectionName);
   Str->setAlignment(Align(1));
@@ -85,7 +88,9 @@ offloading::getOffloadingEntryInitializer(Module &M, object::OffloadKind Kind,
 }
 
 StringRef offloading::getOffloadEntrySection(Module &M) {
-  return M.getTargetTriple().isOSBinFormatMachO() ? "__LLVM,offload_entries"
+  // macOS port: Apple's linker drops the contents of the __LLVM segment (bitcode-bundle sections), which left the entry
+  // table empty in the final executable, so the table lives in __DATA
+  return M.getTargetTriple().isOSBinFormatMachO() ? "__DATA,offload_entries"
                                                   : "llvm_offload_entries";
 }
 
@@ -125,6 +130,10 @@ GlobalVariable *offloading::emitOffloadingEntry(
   else
     Entry->setSection(SectionName);
   Entry->setAlignment(Align(object::OffloadBinary::getAlignment()));
+  // Mach-O linkers dead-strip atoms nothing references (the entries are only reached through the section$start$ and
+  // section$end$ symbols), which left the final executable with an empty entry table; llvm.used emits .no_dead_strip
+  if (Triple.isOSBinFormatMachO())
+    appendToUsed(M, Entry);
   return Entry;
 }
 
@@ -162,14 +171,9 @@ offloading::getOffloadEntryArray(Module &M) {
     DummyEntry->setAlignment(Align(object::OffloadBinary::getAlignment()));
     appendToCompilerUsed(M, DummyEntry);
   } else if (Triple.isOSBinFormatMachO()) {
-    // Mach-O needs a dummy variable in the section (like ELF) to ensure the
-    // linker provides the section boundary symbols.
-    auto *DummyEntry = new GlobalVariable(
-        M, ZeroInitilaizer->getType(), true, GlobalVariable::InternalLinkage,
-        ZeroInitilaizer, "__dummy." + SectionName);
-    DummyEntry->setSection(SectionName);
-    DummyEntry->setAlignment(Align(object::OffloadBinary::getAlignment()));
-    appendToCompilerUsed(M, DummyEntry);
+    // macOS port: no dummy variable here. The Mach-O object writer gives a zero-length variable one byte, and the
+    // wrapper object (linked first) then shifted every real entry by 8 bytes. The linker provides the section$start$
+    // and section$end$ symbols whenever some object defines the section, and the host objects always define entries.
   } else {
     // The COFF linker will merge sections containing a '$' together into a
     // single section. The order of entries in this section will be sorted

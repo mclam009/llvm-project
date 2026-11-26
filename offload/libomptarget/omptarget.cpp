@@ -584,6 +584,20 @@ int targetDataBegin(ident_t *Loc, DeviceTy &Device, int32_t ArgNum,
                           << " bytes for begin address " << HstPtrBegin;
       }
     }
+#ifdef __APPLE__
+    // macOS port: CuMetal binds every kernel pointer argument to the Metal buffer that contains it, but the base
+    // pointer of an array section (map(tofrom: a[START:LENGTH]), indexed with the host indices) lies START elements
+    // below the device copy. Allocate that distance in front of the section so the base pointer stays inside the
+    // allocation (only address space is spent: the padding is neither copied nor touched). Sections farther than 1 GiB
+    // into their array keep the biased pointer.
+    if (TgtPadding == 0 && (ArgTypes[I] & OMP_TGT_MAPTYPE_TARGET_PARAM) &&
+        HstPtrBegin > HstPtrBase) {
+      const uintptr_t SectionOffset =
+          (uintptr_t)HstPtrBegin - (uintptr_t)HstPtrBase;
+      if (SectionOffset <= (uintptr_t(1) << 30))
+        TgtPadding = (int64_t)SectionOffset;
+    }
+#endif
 
     // Address of pointer on the host and device, respectively.
     void *PointerHstPtrBegin, *PointerTgtPtrBegin;

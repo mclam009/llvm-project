@@ -147,8 +147,12 @@ GlobalVariable *createBinDesc(Module &M, ArrayRef<ArrayRef<char>> Bufs,
                                      GlobalVariable::InternalLinkage, Data,
                                      ".omp_offloading.device_image" + Suffix);
     Image->setUnnamedAddr(GlobalValue::UnnamedAddr::Global);
-    Image->setSection(Relocatable ? ".llvm.offloading.relocatable"
-                                  : ".llvm.offloading");
+    // Mach-O: the wrapper gives the image a symbol that is relocated against, which Apple's ld rejects in a custom
+    // segment (__LLVM), so it lives in __DATA here; the embedded objects of the host files keep __LLVM,__offloading
+    if (M.getTargetTriple().isOSBinFormatMachO())
+      Image->setSection(Relocatable ? "__DATA,__offload_rel" : "__DATA,__offloading");
+    else
+      Image->setSection(Relocatable ? ".llvm.offloading.relocatable" : ".llvm.offloading");
     Image->setAlignment(Align(object::OffloadBinary::getAlignment()));
 
     StringRef Binary(Buf.data(), Buf.size());
@@ -647,7 +651,7 @@ public:
         M, Arr->getType(), /*isConstant=*/true, GlobalValue::InternalLinkage,
         Arr, ".sycl_offloading.binary");
     BinaryGV->setUnnamedAddr(GlobalValue::UnnamedAddr::Global);
-    BinaryGV->setSection(".llvm.offloading");
+    BinaryGV->setSection(M.getTargetTriple().isOSBinFormatMachO() ? "__DATA,__offloading" : ".llvm.offloading");
 
     IntegerType *Int64Ty = Type::getInt64Ty(C);
     Constant *Zero = ConstantInt::get(Int64Ty, 0);

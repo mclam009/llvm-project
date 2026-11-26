@@ -128,7 +128,12 @@ GenericKernelTy::getKernelLaunchEnvironment(
                          "runtime requires v%u for cross-team reductions",
                          KernelArgs.Version, OMP_KERNEL_ARG_VERSION);
   if (!NeedsReductionBuffer && !KernelArgs.DynCGroupMem)
+#ifdef __APPLE__
+    // CuMetal cannot resolve an all-ones pointer kernel argument; the kernel treats null and ~0 alike (no environment)
+    return nullptr;
+#else
     return reinterpret_cast<KernelLaunchEnvironmentTy *>(~0);
+#endif
 
   auto AllocOrErr = GenericDevice.dataAlloc(
       sizeof(KernelLaunchEnvironmentTy),

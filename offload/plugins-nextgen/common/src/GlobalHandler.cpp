@@ -13,6 +13,7 @@
 #include "GlobalHandler.h"
 #include "PluginInterface.h"
 #include "Utils/ELF.h"
+#include "Utils/PTX.h"
 
 #include "Shared/Utils.h"
 
@@ -107,6 +108,10 @@ Error GenericGlobalHandlerTy::moveGlobalBetweenDeviceAndHost(
 bool GenericGlobalHandlerTy::isSymbolInImage(GenericDeviceTy &Device,
                                              DeviceImageTy &Image,
                                              StringRef SymName) {
+  // PTX text image (macOS/CuMetal port): the initialized globals are in the text.
+  if (utils::ptx::isPTX(Image.getMemoryBuffer().getBuffer()))
+    return utils::ptx::readGlobal(Image.getMemoryBuffer().getBuffer(), SymName).has_value();
+
   // Get the ELF object file for the image. Notice the ELF object may already
   // be created in previous calls, so we can reuse it. If this is unsuccessful
   // just return false as we couldn't find it.
@@ -164,6 +169,21 @@ Error GenericGlobalHandlerTy::getGlobalMetadataFromImage(
 Error GenericGlobalHandlerTy::readGlobalFromImage(GenericDeviceTy &Device,
                                                   DeviceImageTy &Image,
                                                   const GlobalTy &HostGlobal) {
+
+  // PTX text image (macOS/CuMetal port): copy the initializer parsed from the text.
+  if (utils::ptx::isPTX(Image.getMemoryBuffer().getBuffer())) {
+    auto Bytes = utils::ptx::readGlobal(Image.getMemoryBuffer().getBuffer(), HostGlobal.getName());
+    if (!Bytes)
+      return Plugin::error(ErrorCode::NOT_FOUND, "failed to find global symbol '%s' in the PTX image",
+                           HostGlobal.getName().data());
+    if (Bytes->size() != HostGlobal.getSize())
+      return Plugin::error(ErrorCode::INVALID_BINARY,
+                           "transfer failed because global symbol '%s' has %u bytes in the PTX image but %u bytes on "
+                           "the host",
+                           HostGlobal.getName().data(), (unsigned)Bytes->size(), (unsigned)HostGlobal.getSize());
+    std::memcpy(HostGlobal.getPtr(), Bytes->data(), Bytes->size());
+    return Plugin::success();
+  }
 
   GlobalTy ImageGlobal(HostGlobal.getName(), -1);
   if (auto Err = getGlobalMetadataFromImage(Device, Image, ImageGlobal))

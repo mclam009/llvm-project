@@ -1575,7 +1575,10 @@ void clang::EmbedObject(llvm::Module *M, const CodeGenOptions &CGOpts,
       return;
     }
 
-    llvm::embedBufferInModule(*M, **ObjectOrErr, ".llvm.offloading",
+    // Mach-O section names need a "segment,section" pair (macOS port, see
+    // docs/bug-reports/llvm-offload-macos-wip.patch); object::extractOffloadBinaries looks for the same name
+    llvm::embedBufferInModule(*M, **ObjectOrErr,
+                              M->getTargetTriple().isOSBinFormatMachO() ? "__LLVM,__offloading" : ".llvm.offloading",
                               Align(object::OffloadBinary::getAlignment()));
   }
 }

@@ -12,15 +12,21 @@
 //===----------------------------------------------------------------------===//
 
 #include "llvm/Support/DynamicLibrary.h"
+#include "llvm/Support/FileSystem.h"
 
 #include "Shared/Debug.h"
 
 #include "DLWrap.h"
 #include "cuda.h"
 
+#include <cstdlib>
 #include <memory>
 #include <string>
 #include <unordered_map>
+
+#ifdef __APPLE__
+#include <dlfcn.h>
+#endif
 
 using namespace llvm::offload::debug;
 
@@ -116,7 +122,37 @@ DLWRAP(cuMemGetAllocationGranularity, 3)
 DLWRAP_FINALIZE()
 
 #ifndef DYNAMIC_CUDA_PATH
+#ifdef __APPLE__
+// macOS port: the "CUDA driver" is CuMetal (https://github.com/Lulzx/cuda-metal), which runs the PTX on the Metal GPU
+#define DYNAMIC_CUDA_PATH "libcumetal.dylib"
+#else
 #define DYNAMIC_CUDA_PATH "libcuda.so"
+#endif
+#endif
+
+#ifdef __APPLE__
+// Driver functions this plugin binds but CuMetal does not export. The plugin reads the stack/heap size limits at
+// device initialization (and sets them only when the user asks), so those two get harmless stubs; stream-ordered
+// allocation and managed-memory prefetch report CUDA_ERROR_NOT_SUPPORTED, which the plugin handles. Every other
+// missing function still makes the library unusable.
+static CUresult unsupportedDriverFunction() { return CUDA_ERROR_NOT_SUPPORTED; }
+static CUresult stubCtxGetLimit(size_t *Value, int) {
+  if (Value)
+    *Value = 8u << 20; // the CUDA default heap size; the stack size query only needs some value
+  return CUDA_SUCCESS;
+}
+static CUresult stubCtxSetLimit(int, size_t) { return CUDA_SUCCESS; }
+
+static void *optionalDriverFunctionStub(const char *Sym) {
+  std::string Name(Sym);
+  if (Name == "cuCtxGetLimit")
+    return reinterpret_cast<void *>(&stubCtxGetLimit);
+  if (Name == "cuCtxSetLimit")
+    return reinterpret_cast<void *>(&stubCtxSetLimit);
+  if (Name == "cuMemAllocAsync" || Name == "cuMemFreeAsync" || Name == "cuMemPrefetchAsync")
+    return reinterpret_cast<void *>(&unsupportedDriverFunction);
+  return nullptr;
+}
 #endif
 
 #ifndef TARGET_NAME
@@ -146,6 +182,31 @@ static bool checkForCUDA() {
 
   const char *CudaLib = DYNAMIC_CUDA_PATH;
   std::string ErrMsg;
+#ifdef __APPLE__
+  // dlopen() does not search Homebrew's lib directory: honor CUMETAL_LIBRARY, then a libcumetal.dylib installed next to
+  // this runtime (a self-contained toolchain prefix), then the Homebrew prefix, then the default search path
+  std::string CumetalPath;
+  if (const char *Env = std::getenv("CUMETAL_LIBRARY")) {
+    CumetalPath = Env;
+  } else {
+    Dl_info Info;
+    if (dladdr(reinterpret_cast<void *>(&checkForCUDA), &Info) && Info.dli_fname) {
+      std::string Sibling(Info.dli_fname);
+      Sibling.erase(Sibling.find_last_of('/') + 1);
+      Sibling += "libcumetal.dylib";
+      if (llvm::sys::fs::exists(Sibling))
+        CumetalPath = Sibling;
+    }
+    if (CumetalPath.empty() && llvm::sys::fs::exists("/opt/homebrew/opt/cumetal/lib/libcumetal.dylib"))
+      CumetalPath = "/opt/homebrew/opt/cumetal/lib/libcumetal.dylib";
+  }
+  if (!CumetalPath.empty())
+    CudaLib = CumetalPath.c_str();
+  // OpenMP kernels follow device pointers stored in memory (the reduction buffer inside the kernel launch
+  // environment, mapped structs), which CuMetal's Metal buffers are only guaranteed to keep resident when this mode is
+  // on; without it cross-team reductions over 1024 teams lost partial results. Respect an explicit user setting.
+  ::setenv("CUMETAL_USE_METAL_DEVICE_ADDRESSES", "1", /*overwrite=*/0);
+#endif
   auto DynlibHandle = std::make_unique<llvm::sys::DynamicLibrary>(
       llvm::sys::DynamicLibrary::getPermanentLibrary(CudaLib, &ErrMsg));
   if (!DynlibHandle->isValid()) {
@@ -170,6 +231,25 @@ static bool checkForCUDA() {
     }
 
     void *P = DynlibHandle->getAddressOfSymbol(Sym);
+#ifdef __APPLE__
+    // cuda.h renames some functions to <name>_v2; CuMetal exports a few of them only under the plain name
+    if (P == nullptr) {
+      std::string SymName(Sym);
+      if (SymName.size() > 3 && SymName.compare(SymName.size() - 3, 3, "_v2") == 0) {
+        P = DynlibHandle->getAddressOfSymbol(SymName.substr(0, SymName.size() - 3).c_str());
+        if (P)
+          ODBG(OLDT_Init) << "Implementing " << Sym << " with dlsym(" << SymName.substr(0, SymName.size() - 3)
+                          << ") -> " << P;
+      }
+    }
+    if (P == nullptr) {
+      if (void *Stub = optionalDriverFunctionStub(Sym)) {
+        ODBG(OLDT_Init) << "'" << Sym << "' is not in '" << CudaLib << "': using a stub";
+        *dlwrap::pointer(I) = Stub;
+        continue;
+      }
+    }
+#endif
     if (P == nullptr) {
       ODBG(OLDT_Init) << "Unable to find '" << Sym << "' in '" << CudaLib
                       << "'!";

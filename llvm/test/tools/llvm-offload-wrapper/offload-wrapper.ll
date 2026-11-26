@@ -54,10 +54,8 @@
 ; RUN: llvm-offload-wrapper --triple=x86_64-apple-macosx10.15.0 -kind=hip %s -o %t.bc
 ; RUN: llvm-dis %t.bc -o - | FileCheck %s --check-prefix=HIP-MACHO
 
-;      HIP-MACHO: @"\01section$start$__LLVM$offload_entries" = external hidden constant [0 x %struct.__tgt_offload_entry]
-; HIP-MACHO-NEXT: @"\01section$end$__LLVM$offload_entries" = external hidden constant [0 x %struct.__tgt_offload_entry]
-; HIP-MACHO-NEXT: @"__dummy.__LLVM,offload_entries" = internal constant [0 x %struct.__tgt_offload_entry] zeroinitializer, section "__LLVM,offload_entries", align 8
-; HIP-MACHO-NEXT: @llvm.compiler.used = appending global [1 x ptr] [ptr @"__dummy.__LLVM,offload_entries"], section "llvm.metadata"
+;      HIP-MACHO: @"\01section$start$__DATA$offload_entries" = external hidden constant [0 x %struct.__tgt_offload_entry]
+; HIP-MACHO-NEXT: @"\01section$end$__DATA$offload_entries" = external hidden constant [0 x %struct.__tgt_offload_entry]
 ; HIP-MACHO-NEXT: @.fatbin_image = internal constant {{.*}}, section "__HIP,__hip_fatbin"
 ; HIP-MACHO-NEXT: @.fatbin_wrapper = internal constant %fatbin_wrapper { i32 1212764230, i32 1, ptr @.fatbin_image, ptr null }, section "__HIP,__fatbin", no_sanitize_address, no_sanitize_hwaddress, align 8
 ; HIP-MACHO-NEXT: @.hip.binary_handle = internal global ptr null

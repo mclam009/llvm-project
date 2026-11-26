@@ -124,6 +124,9 @@ def library_S : Separate<["--", "-"], "library">, Flags<[HelpHidden]>,
 def library_EQ : Joined<["--", "-"], "library=">, Flags<[HelpHidden]>,
   Alias<library_path>;
 
+// ld64's "-lto_library <path>" (the Darwin driver adds it): without this entry it parses as "-l to_library"
+def lto_library : Separate<["-"], "lto_library">, Flags<[HelpHidden]>;
+
 def rpath : Separate<["--", "-"], "rpath">;
 def rpath_EQ : Joined<["--", "-"], "rpath=">, Flags<[HelpHidden]>, Alias<rpath>;
 
