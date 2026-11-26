@@ -7068,7 +7068,9 @@ public:
   /// where, map-type-modifier ::= always | close | mapper(mapper-identifier) |
   /// present
   /// where, map-type ::= alloc | delete | from | release | to | tofrom
-  bool parseMapTypeModifiers(SemaOpenMP::OpenMPVarListDataTy &Data);
+  /// \p DKind is the directive of the clause.
+  bool parseMapTypeModifiers(OpenMPDirectiveKind DKind,
+                             SemaOpenMP::OpenMPVarListDataTy &Data);
 
   /// Parses 'omp begin declare variant' directive.
   /// The syntax is:

@@ -4510,7 +4510,27 @@ bool Parser::parseMapperModifier(SemaOpenMP::OpenMPVarListDataTy &Data) {
 
 static OpenMPMapClauseKind isMapType(Parser &P);
 
-bool Parser::parseMapTypeModifiers(SemaOpenMP::OpenMPVarListDataTy &Data) {
+/// Whether the map clauses of directive \p DKind take the iterator modifier:
+/// OpenMP 5.1 added it to the map clause and OpenMP 5.2 to the map clauses of
+/// declare mapper.
+static bool isMapIteratorAllowed(const LangOptions &LangOpts,
+                                 OpenMPDirectiveKind DKind) {
+  return LangOpts.OpenMP >= 52 ||
+         (LangOpts.OpenMP >= 51 && DKind != OMPD_declare_mapper);
+}
+
+/// The map-type-modifiers that err_omp_unknown_map_type_modifier lists after
+/// 'always', 'close' and 'mapper' (its first %select): none, 'present' (OpenMP
+/// 5.1), or 'present' and 'iterator'.
+static unsigned getMapTypeModifiersForDiag(const LangOptions &LangOpts,
+                                           OpenMPDirectiveKind DKind) {
+  if (LangOpts.OpenMP < 51)
+    return 0;
+  return isMapIteratorAllowed(LangOpts, DKind) ? 2 : 1;
+}
+
+bool Parser::parseMapTypeModifiers(OpenMPDirectiveKind DKind,
+                                   SemaOpenMP::OpenMPVarListDataTy &Data) {
   bool HasMapType = false;
   SourceLocation PreMapLoc = Tok.getLocation();
   StringRef PreMapName = "";
@@ -4561,9 +4581,7 @@ bool Parser::parseMapTypeModifiers(SemaOpenMP::OpenMPVarListDataTy &Data) {
             << "map type modifier";
       if (getLangOpts().OpenMP < 60)
         Diag(Tok, diag::err_omp_unknown_map_type_modifier)
-            << (getLangOpts().OpenMP >= 51
-                    ? (getLangOpts().OpenMP >= 52 ? 2 : 1)
-                    : 0)
+            << getMapTypeModifiersForDiag(getLangOpts(), DKind)
             << getLangOpts().OpenMPExtensions << 0;
       ConsumeToken();
     } else {
@@ -4585,8 +4603,7 @@ bool Parser::parseMapTypeModifiers(SemaOpenMP::OpenMPVarListDataTy &Data) {
       }
 
       Diag(Tok, diag::err_omp_unknown_map_type_modifier)
-          << (getLangOpts().OpenMP >= 51 ? (getLangOpts().OpenMP >= 52 ? 2 : 1)
-                                         : 0)
+          << getMapTypeModifiersForDiag(getLangOpts(), DKind)
           << getLangOpts().OpenMPExtensions
           << (getLangOpts().OpenMP >= 60 ? 1 : 0);
       ConsumeToken();
@@ -5085,9 +5102,9 @@ bool Parser::ParseOpenMPVarList(OpenMPDirectiveKind DKind,
       Data.IteratorExpr = IteratorRes.get();
       // Parse ','
       ExpectAndConsume(tok::comma);
-      if (getLangOpts().OpenMP < 52) {
+      if (!isMapIteratorAllowed(getLangOpts(), DKind)) {
         Diag(Tok, diag::err_omp_unknown_map_type_modifier)
-            << (getLangOpts().OpenMP >= 51 ? 1 : 0)
+            << getMapTypeModifiersForDiag(getLangOpts(), DKind)
             << getLangOpts().OpenMPExtensions << 0;
         InvalidIterator = true;
       }
@@ -5115,7 +5132,7 @@ bool Parser::ParseOpenMPVarList(OpenMPDirectiveKind DKind,
     if (ColonPresent) {
       if (getLangOpts().OpenMP >= 60 && getCurToken().is(tok::colon))
         Diag(Tok, diag::err_omp_map_modifier_specification_list);
-      IsInvalidMapperModifier = parseMapTypeModifiers(Data);
+      IsInvalidMapperModifier = parseMapTypeModifiers(DKind, Data);
       if (getLangOpts().OpenMP < 60 && !IsInvalidMapperModifier)
         parseMapType(*this, Data);
       else
