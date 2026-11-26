@@ -306,6 +306,17 @@ struct SA {
     // lt51-omp-error@+1 {{incorrect map type modifier, expected one of: 'always', 'close', 'mapper'}}
     #pragma omp target map(iterator(), tofrom:a)
     {}
+    // The modifiers may be in any order.
+    // lt51-ompx-error@+2 {{incorrect map type modifier, expected one of: 'always', 'close', 'mapper', 'ompx_hold'}}
+    // lt51-omp-error@+1 {{incorrect map type modifier, expected one of: 'always', 'close', 'mapper'}}
+    #pragma omp target map(always, iterator(it=0:10), close, tofrom:a)
+    {}
+    // lt51-ompx-error@+4 2 {{incorrect map type modifier, expected one of: 'always', 'close', 'mapper', 'ompx_hold'}}
+    // lt51-omp-error@+3 2 {{incorrect map type modifier, expected one of: 'always', 'close', 'mapper'}}
+    // ge51-error@+2 {{same map type modifier has been specified more than once}}
+    // ge60-error@+1 {{same map type modifier has been specified more than once}}
+    #pragma omp target map(iterator(it=0:10), always, iterator(jt=0:10), tofrom:a)
+    {}
     return;
   }
 };

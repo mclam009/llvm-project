@@ -4559,6 +4559,26 @@ bool Parser::parseMapTypeModifiers(OpenMPDirectiveKind DKind,
         Diag(Data.MapTypeModifiersLoc.back(), diag::err_omp_missing_comma)
             << "map type modifier";
 
+    } else if (TypeModifier == OMPC_MAP_MODIFIER_iterator &&
+               PP.LookAhead(0).is(tok::l_paren)) {
+      // The modifiers may be in any order. ParseOpenMPVarList parses an
+      // iterator modifier that comes first, and exits the scope of the
+      // iterators after the list; a second one is diagnosed by Sema.
+      if (!llvm::is_contained(Data.MapTypeModifiers,
+                              OMPC_MAP_MODIFIER_iterator))
+        EnterScope(Scope::OpenMPDirectiveScope | Scope::DeclScope);
+      Data.MapTypeModifiers.push_back(TypeModifier);
+      Data.MapTypeModifiersLoc.push_back(Tok.getLocation());
+      if (!isMapIteratorAllowed(getLangOpts(), DKind))
+        Diag(Tok, diag::err_omp_unknown_map_type_modifier)
+            << getMapTypeModifiersForDiag(getLangOpts(), DKind)
+            << getLangOpts().OpenMPExtensions << 0;
+      ExprResult IteratorRes = ParseOpenMPIteratorsExpr();
+      Data.IteratorExpr = IteratorRes.get();
+      if (Tok.isNot(tok::comma) && Tok.isNot(tok::colon) &&
+          getLangOpts().OpenMP >= 52)
+        Diag(Data.MapTypeModifiersLoc.back(), diag::err_omp_missing_comma)
+            << "map type modifier";
     } else if (getLangOpts().OpenMP >= 60 && MapKind != OMPC_MAP_unknown) {
       if (!HasMapType) {
         HasMapType = true;
@@ -5133,6 +5153,10 @@ bool Parser::ParseOpenMPVarList(OpenMPDirectiveKind DKind,
       if (getLangOpts().OpenMP >= 60 && getCurToken().is(tok::colon))
         Diag(Tok, diag::err_omp_map_modifier_specification_list);
       IsInvalidMapperModifier = parseMapTypeModifiers(DKind, Data);
+      // An iterator modifier after another one entered the scope of its
+      // iterators.
+      HasIterator |=
+          llvm::is_contained(Data.MapTypeModifiers, OMPC_MAP_MODIFIER_iterator);
       if (getLangOpts().OpenMP < 60 && !IsInvalidMapperModifier)
         parseMapType(*this, Data);
       else
