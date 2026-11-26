@@ -141,8 +141,10 @@ T foo() {
 #pragma omp parallel for ordered
   for (int i = 0; i < 10; ++i) {
 #if _OPENMP >= 202111
-    #pragma omp ordered doacross(source:) // omp52-error {{'ordered' directive with 'doacross' clause cannot be closely nested inside ordered region without specified parameter}}
-    #pragma omp ordered doacross(sink : i) // omp52-error {{'ordered' directive with 'doacross' clause cannot be closely nested inside ordered region without specified parameter}}
+    // OpenMP 5.2: an 'ordered' clause without an argument is that of a
+    // doacross loop (ordered_doacross_implicit_messages.cpp).
+    #pragma omp ordered doacross(source:)
+    #pragma omp ordered doacross(sink : i)
 #else
     #pragma omp ordered depend(source) // expected-error {{'ordered' directive with 'depend' clause cannot be closely nested inside ordered region without specified parameter}}
     #pragma omp ordered depend(sink : i) // expected-error {{'ordered' directive with 'depend' clause cannot be closely nested inside ordered region without specified parameter}}

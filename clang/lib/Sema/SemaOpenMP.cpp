@@ -195,6 +195,11 @@ private:
     /// 'ordered' clause, the second one is true if the regions has 'ordered'
     /// clause, false otherwise.
     std::optional<std::pair<const Expr *, OMPOrderedClause *>> OrderedRegion;
+    /// The location of the first stand-alone 'ordered' construct with
+    /// 'doacross' or 'depend' clauses that made the 'ordered' clause of this
+    /// region, which has no argument, the clause of a doacross loop (OpenMP
+    /// 5.2); invalid if there is none.
+    SourceLocation ImplicitDoacrossLocation;
     bool RegionHasOrderConcurrent = false;
     unsigned AssociatedLoops = 1;
     bool HasMutipleLoops = false;
@@ -911,6 +916,39 @@ public:
       if (Parent->OrderedRegion)
         return *Parent->OrderedRegion;
     return std::make_pair(nullptr, nullptr);
+  }
+  /// OpenMP 5.2: an 'ordered' clause without an argument behaves as if the
+  /// argument were the number of associated loops, and its loop is a doacross
+  /// loop when a stand-alone 'ordered' construct at \p Loc binds to it. Gives
+  /// the parent region's 'ordered' clause that argument, as a new clause that
+  /// the directive takes in place of its own (getOrderedRegionParam()).
+  /// Returns false if the parent region's 'ordered' clause has an argument or
+  /// there is none.
+  bool setParentOrderedRegionDoacross(ASTContext &Ctx, SourceLocation Loc) {
+    SharingMapTy *Parent = getSecondOnStackOrNull();
+    if (!Parent || !Parent->OrderedRegion || Parent->OrderedRegion->first ||
+        !Parent->OrderedRegion->second)
+      return false;
+    OMPOrderedClause *Clause = Parent->OrderedRegion->second;
+    // AssociatedLoops counts down while the associated loops are parsed; each
+    // of them has added its control variable.
+    unsigned NumLoops = std::max<size_t>(Parent->LCVMap.size(), 1);
+    Expr *Param = IntegerLiteral::Create(
+        Ctx, llvm::APInt(Ctx.getIntWidth(Ctx.IntTy), NumLoops), Ctx.IntTy,
+        Clause->getBeginLoc());
+    OMPOrderedClause *Doacross =
+        OMPOrderedClause::Create(Ctx, Param, NumLoops, Clause->getBeginLoc(),
+                                 SourceLocation(), Clause->getEndLoc());
+    Parent->OrderedRegion.emplace(Param, Doacross);
+    Parent->ImplicitDoacrossLocation = Loc;
+    return true;
+  }
+  /// The location of the stand-alone 'ordered' construct that made the
+  /// 'ordered' clause of the parent region a doacross clause, or an invalid
+  /// location if its argument, if any, is explicit.
+  SourceLocation getParentImplicitDoacrossLoc() const {
+    const SharingMapTy *Parent = getSecondOnStackOrNull();
+    return Parent ? Parent->ImplicitDoacrossLocation : SourceLocation();
   }
   /// Marks current region as having an 'order' clause.
   void setRegionHasOrderConcurrent(bool HasOrderConcurrent) {
@@ -6305,6 +6343,15 @@ StmtResult SemaOpenMP::ActOnOpenMPExecutableDirective(
   VarsWithInheritedDSAType VarsWithInheritedDSA;
   bool ErrorFound = false;
   ClausesWithImplicit.append(Clauses.begin(), Clauses.end());
+  // An 'ordered' clause without an argument that a stand-alone 'ordered'
+  // construct in the loop made a doacross clause (OpenMP 5.2) is replaced by
+  // that clause, which has the argument.
+  if (OMPOrderedClause *Doacross = DSAStack->getOrderedRegionParam().second;
+      Doacross && Doacross->getNumForLoops())
+    for (OMPClause *&C : ClausesWithImplicit)
+      if (auto *Ordered = dyn_cast<OMPOrderedClause>(C);
+          Ordered && Ordered != Doacross && !Ordered->getNumForLoops())
+        C = Doacross;
 
   if (AStmt && !SemaRef.CurContext->isDependentContext() &&
       isOpenMPCapturingDirective(Kind)) {
@@ -11614,6 +11661,36 @@ StmtResult SemaOpenMP::ActOnOpenMPScanDirective(ArrayRef<OMPClause *> Clauses,
   return OMPScanDirective::Create(getASTContext(), StartLoc, EndLoc, Clauses);
 }
 
+/// OpenMP 5.2 [4.4.4, ordered Clause]: "If n is not specified then the
+/// behavior is as if n is specified with the same value as is specified for
+/// the collapse clause on the construct." So a stand-alone 'ordered' construct
+/// at \p Loc with 'doacross' or 'depend' clauses makes the loop to which it
+/// binds a doacross loop also when the loop's 'ordered' clause has no argument
+/// (in OpenMP 5.1 and before the argument was required). A block-associated
+/// 'ordered' construct cannot bind to the same loop. In a template the number
+/// of associated loops may not be known: the loop is checked when the template
+/// is instantiated. Returns true if the parent loop is such a doacross loop,
+/// or in a template may be one.
+static bool checkImplicitDoacrossLoop(Sema &S, DSAStackTy *Stack,
+                                      SourceLocation Loc) {
+  if (S.getLangOpts().OpenMP < 52 ||
+      Stack->getCurrentDirective() != OMPD_ordered)
+    return false;
+  if (S.CurContext->isDependentContext()) {
+    auto [Param, Clause] = Stack->getParentOrderedRegionParam();
+    return Clause && !Param;
+  }
+  if (!Stack->setParentOrderedRegionDoacross(S.getASTContext(), Loc))
+    return Stack->getParentImplicitDoacrossLoc().isValid();
+  if (Stack->doesParentHasOrderedDirective()) {
+    S.Diag(Loc, diag::err_omp_ordered_doacross_and_block) << 1;
+    S.Diag(Stack->getParentOrderedDirectiveLoc(),
+           diag::note_omp_previous_directive)
+        << "ordered";
+  }
+  return true;
+}
+
 StmtResult
 SemaOpenMP::ActOnOpenMPOrderedDirective(ArrayRef<OMPClause *> Clauses,
                                         Stmt *AStmt, SourceLocation StartLoc,
@@ -11672,6 +11749,9 @@ SemaOpenMP::ActOnOpenMPOrderedDirective(ArrayRef<OMPClause *> Clauses,
       SC = cast<OMPSIMDClause>(C);
     }
   }
+  // Done for the clauses already, unless they were invalid.
+  bool ImplicitDoacross = (DependFound || DoacrossFound) &&
+                          checkImplicitDoacrossLoop(SemaRef, DSAStack, StartLoc);
   if (!ErrorFound && !SC &&
       isOpenMPSimdDirective(DSAStack->getParentDirective())) {
     // OpenMP [2.8.1,simd Construct, Restrictions]
@@ -11688,7 +11768,7 @@ SemaOpenMP::ActOnOpenMPOrderedDirective(ArrayRef<OMPClause *> Clauses,
         << getOpenMPClauseNameForDiag(TC ? TC->getClauseKind()
                                          : SC->getClauseKind());
     ErrorFound = true;
-  } else if ((DependFound || DoacrossFound) &&
+  } else if ((DependFound || DoacrossFound) && !ImplicitDoacross &&
              !DSAStack->getParentOrderedRegionParam().first) {
     SourceLocation Loc =
         DependFound ? DependFound->getBeginLoc() : DoacrossFound->getBeginLoc();
@@ -11697,7 +11777,15 @@ SemaOpenMP::ActOnOpenMPOrderedDirective(ArrayRef<OMPClause *> Clauses,
                                                   : OMPC_doacross);
     ErrorFound = true;
   } else if (TC || Clauses.empty()) {
-    if (const Expr *Param = DSAStack->getParentOrderedRegionParam().first) {
+    if (SourceLocation DoacrossLoc = DSAStack->getParentImplicitDoacrossLoc();
+        DoacrossLoc.isValid()) {
+      Diag(TC ? TC->getBeginLoc() : StartLoc,
+           diag::err_omp_ordered_doacross_and_block)
+          << 0;
+      Diag(DoacrossLoc, diag::note_omp_previous_directive) << "ordered";
+      ErrorFound = true;
+    } else if (const Expr *Param =
+                   DSAStack->getParentOrderedRegionParam().first) {
       SourceLocation ErrLoc = TC ? TC->getBeginLoc() : StartLoc;
       Diag(ErrLoc, diag::err_omp_ordered_directive_with_param)
           << (TC != nullptr);
@@ -22094,6 +22182,7 @@ struct DoacrossDataInfoTy {
 static DoacrossDataInfoTy
 ProcessOpenMPDoacrossClauseCommon(Sema &SemaRef, bool IsSource,
                                   ArrayRef<Expr *> VarList, DSAStackTy *Stack,
+                                  SourceLocation StartLoc,
                                   SourceLocation EndLoc) {
 
   SmallVector<Expr *, 8> Vars;
@@ -22101,6 +22190,7 @@ ProcessOpenMPDoacrossClauseCommon(Sema &SemaRef, bool IsSource,
   llvm::APSInt DepCounter(/*BitWidth=*/32);
   llvm::APSInt TotalDepCount(/*BitWidth=*/32);
 
+  checkImplicitDoacrossLoop(SemaRef, Stack, StartLoc);
   if (const Expr *OrderedCountExpr =
           Stack->getParentOrderedRegionParam().first) {
     TotalDepCount = OrderedCountExpr->EvaluateKnownConstInt(SemaRef.Context);
@@ -22268,7 +22358,8 @@ OMPClause *SemaOpenMP::ActOnOpenMPDependClause(
 
   if (DepKind == OMPC_DEPEND_sink || DepKind == OMPC_DEPEND_source) {
     DoacrossDataInfoTy VarOffset = ProcessOpenMPDoacrossClauseCommon(
-        SemaRef, DepKind == OMPC_DEPEND_source, VarList, DSAStack, EndLoc);
+        SemaRef, DepKind == OMPC_DEPEND_source, VarList, DSAStack, StartLoc,
+        EndLoc);
     Vars = VarOffset.Vars;
     OpsOffs = VarOffset.OpsOffs;
     TotalDepCount = VarOffset.TotalDepCount;
@@ -26156,7 +26247,7 @@ OMPClause *SemaOpenMP::ActOnOpenMPDoacrossClause(
       DepType == OMPC_DOACROSS_source ||
           DepType == OMPC_DOACROSS_source_omp_cur_iteration ||
           DepType == OMPC_DOACROSS_sink_omp_cur_iteration,
-      VarList, DSAStack, EndLoc);
+      VarList, DSAStack, StartLoc, EndLoc);
   Vars = VarOffset.Vars;
   OpsOffs = VarOffset.OpsOffs;
   TotalDepCount = VarOffset.TotalDepCount;

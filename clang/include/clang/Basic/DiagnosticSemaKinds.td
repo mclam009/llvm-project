@@ -12526,6 +12526,9 @@ def err_omp_ordered_directive_with_param : Error<
   "'ordered' directive %select{without any clauses|with 'threads' clause}0 cannot be closely nested inside ordered region with specified parameter">;
 def err_omp_ordered_directive_without_param : Error<
   "'ordered' directive with '%0' clause cannot be closely nested inside ordered region without specified parameter">;
+def err_omp_ordered_doacross_and_block : Error<
+  "'ordered' directive %select{without|with}0 'doacross' or 'depend' clauses cannot bind to the same region as an "
+  "'ordered' directive %select{with|without}0 them">;
 def note_omp_ordered_param : Note<
   "'ordered' clause%select{| with specified parameter}0">;
 def err_omp_expected_base_var_name : Error<
