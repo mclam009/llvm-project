@@ -81,7 +81,8 @@ if is_msvc:
     )
     config.substitutions.append(("%librt ", base_lib))
 elif config.target_os == "Darwin":
-    base_lib = os.path.join(config.compiler_rt_libdir, "libclang_rt.osx.a ")
+    base_lib = os.path.join(config.compiler_rt_libdir, "libclang_rt.osx.a")
+    config.substitutions.append(("%osx_builtins", base_lib))
     config.substitutions.append(("%librt ", base_lib + " -lSystem "))
 elif config.target_os == "Windows":
     base_lib = os.path.join(

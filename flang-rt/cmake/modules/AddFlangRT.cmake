@@ -226,12 +226,6 @@ function (add_flangrt_library name)
   endforeach ()
 
  set(TARGET_FLAGS)
-  if(APPLE)
-    set(DARWIN_EMBEDDED_PLATFORMS)
-    set(DARWIN_osx_BUILTIN_MIN_VER 10.7)
-    set(DARWIN_osx_BUILTIN_MIN_VER_FLAG
-        -mmacosx-version-min=${DARWIN_osx_BUILTIN_MIN_VER})
-  endif()
 
   # Define how to compile and link the library.
   # Some conceptionally only apply to ${srctargets} or ${libtargets}, but we
@@ -314,7 +308,8 @@ function (add_flangrt_library name)
       # that checks for _POSIX_C_SOURCE.
       # Setting _POSIX_C_SOURCE avoids these issues.
       target_compile_options(${tgtname} PRIVATE
-          $<$<COMPILE_LANGUAGE:CXX>:${DARWIN_osx_BUILTIN_MIN_VER_FLAG} -D_POSIX_C_SOURCE=200809>
+          $<$<AND:$<COMPILE_LANGUAGE:CXX>,$<PLATFORM_ID:Darwin>>:-mmacosx-version-min=14.0>
+          $<$<COMPILE_LANGUAGE:CXX>:-D_POSIX_C_SOURCE=200809>
         )
     endif ()
 
