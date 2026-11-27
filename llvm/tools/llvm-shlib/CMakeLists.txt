@@ -113,35 +113,14 @@ if(LLVM_BUILD_LLVM_C_DYLIB AND NOT MSVC)
     message(FATAL_ERROR "Generating libLLVM-c requires LLVM_BUILD_LLVM_C_DYLIB on Darwin")
   endif()
 
-  # To get the export list for a single llvm library:
-  # nm ${LIB_PATH} | awk "/T _LLVM/ { print $3 }" | sort -u | sed -e "s/^_//g" > ${LIB_PATH}.exports
-
-  set(LLVM_EXPORTED_SYMBOL_FILE ${LLVM_BINARY_DIR}/libllvm-c.exports)
-
-  set(LIB_DIR ${LLVM_LIBRARY_DIR})
-  set(LIB_NAME ${LIB_DIR}/${CMAKE_SHARED_LIBRARY_PREFIX}LLVM)
-  set(LIB_PATH ${LIB_NAME}${CMAKE_SHARED_LIBRARY_SUFFIX})
-  set(LIB_EXPORTS_PATH ${LIB_NAME}.exports)
-  list(APPEND LLVM_DYLIB_REQUIRED_EXPORTS ${LIB_EXPORTS_PATH})
-
-  add_custom_command(OUTPUT ${LLVM_EXPORTED_SYMBOL_FILE}
-    COMMAND nm ${LIB_PATH} | awk "/T _LLVM/ || /T LLVM/ { print $3 }" | sort -u | sed -e "s/^_//g" > ${LLVM_EXPORTED_SYMBOL_FILE}
-    WORKING_DIRECTORY ${LIB_DIR}
-    DEPENDS LLVM
-    COMMENT "Generating Export list for LLVM..."
-    VERBATIM )
-
-  add_custom_target(libLLVMCExports DEPENDS ${LLVM_EXPORTED_SYMBOL_FILE})
-
+  # The wrapper defines no symbols. Re-export libLLVM once, including when
+  # libLLVM itself was built with a restricted export list.
+  set(LLVM_EXPORTED_SYMBOL_FILE "")
   add_llvm_library(LLVM-C SHARED ${SOURCES} INSTALL_WITH_TOOLCHAIN)
 
   target_link_libraries(LLVM-C PUBLIC LLVM)
-  add_dependencies(LLVM-C libLLVMCExports)
-
+  target_link_options(LLVM-C PRIVATE "LINKER:-reexport_library,$<TARGET_FILE:LLVM>")
   llvm_set_macho_current_version(LLVM-C ${LLVM_VERSION_MAJOR})
-  set_property(TARGET LLVM-C APPEND_STRING PROPERTY
-              LINK_FLAGS
-              " -Wl,-reexport_library ${LIB_PATH}")
 endif()
 
 if(LLVM_BUILD_LLVM_C_DYLIB AND MSVC)

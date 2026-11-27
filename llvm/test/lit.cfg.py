@@ -588,6 +588,9 @@ if config.link_llvm_dylib:
         )
     )
 
+if config.build_llvm_c_dylib and config.target_os == "Darwin":
+    config.available_features.add("darwin-llvm-c-dylib")
+
 if config.have_tf_aot:
     config.available_features.add("have_tf_aot")
 

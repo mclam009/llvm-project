@@ -1,0 +1,7 @@
+# REQUIRES: darwin-llvm-c-dylib, native, system-darwin
+# RUN: llvm-objdump --macho --private-headers "%llvmshlibdir/libLLVM-C.dylib" | FileCheck %s
+# RUN: %python -c "import ctypes, sys; lib = ctypes.CDLL(sys.argv[1]); \
+# RUN:   lib.LLVMABIAlignmentOfType; lib.LLVMABISizeOfType" "%llvmshlibdir/libLLVM-C.dylib"
+# CHECK:      cmd LC_REEXPORT_DYLIB
+# CHECK:      name {{.*}}libLLVM.{{.*}}dylib
+# CHECK-NOT:  cmd LC_REEXPORT_DYLIB
