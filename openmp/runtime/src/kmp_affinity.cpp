@@ -39,6 +39,12 @@ static hierarchy_info machine_hierarchy;
 void __kmp_cleanup_hierarchy() { machine_hierarchy.fini(); }
 
 #if KMP_AFFINITY_SUPPORTED
+static int nCoresPerPkg, nPackages;
+static int __kmp_nThreadsPerCore;
+#ifndef KMP_DFLT_NTH_CORES
+static int __kmp_ncores;
+#endif
+
 // Helper class to see if place lists further restrict the fullMask
 class kmp_full_mask_modifier_t {
   kmp_affin_mask_t *mask;
@@ -94,12 +100,6 @@ void __kmp_get_hierarchy(kmp_uint32 nproc, kmp_bstate_t *thr_bar) {
                      &(thr_bar->base_leaf_kids));
   thr_bar->skip_per_level = machine_hierarchy.skipPerLevel;
 }
-
-static int nCoresPerPkg, nPackages;
-static int __kmp_nThreadsPerCore;
-#ifndef KMP_DFLT_NTH_CORES
-static int __kmp_ncores;
-#endif
 
 const char *__kmp_hw_get_catalog_string(kmp_hw_t type, bool plural) {
   switch (type) {
@@ -609,6 +609,7 @@ void kmp_topology_t::_set_sub_ids() {
 }
 
 void kmp_topology_t::_set_globals() {
+#if KMP_AFFINITY_SUPPORTED
   // Set nCoresPerPkg, nPackages, __kmp_nThreadsPerCore, __kmp_ncores
   int core_level, thread_level, package_level;
   package_level = get_level(KMP_HW_SOCKET);
@@ -634,6 +635,7 @@ void kmp_topology_t::_set_globals() {
 #ifndef KMP_DFLT_NTH_CORES
   __kmp_ncores = get_count(core_level);
 #endif
+#endif // KMP_AFFINITY_SUPPORTED
 }
 
 kmp_topology_t *kmp_topology_t::allocate(int nproc, int ndepth,

@@ -26,6 +26,11 @@ config.compiler_frontend_variant = "@CMAKE_C_COMPILER_FRONTEND_VARIANT@"
 config.compiler_simulate_id = "@CMAKE_C_SIMULATE_ID@"
 config.llvm_tools_dir = "@LLVM_TOOLS_DIR@"
 
+if config.operating_system == "Darwin" and "Clang" in "@CMAKE_CXX_COMPILER_ID@":
+    config.available_features.add("darwin-clang-runtime")
+    config.substitutions.append(("%libomp_build_cxx",
+                                 '"@CMAKE_CXX_COMPILER@" @"@CMAKE_CURRENT_BINARY_DIR@/affinity.rsp"'))
+
 import lit.llvm
 lit.llvm.initialize(lit_config, config)
 
