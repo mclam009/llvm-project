@@ -519,10 +519,14 @@ if(APPLE)
   set(CMAKE_OSX_DEPLOYMENT_TARGET "")
 
   set(DARWIN_COMMON_CFLAGS -stdlib=libc++)
-  set(DARWIN_COMMON_LINK_FLAGS
-    -stdlib=libc++
-    -lc++
-    -lc++abi)
+  # Keep both libraries explicit for runtimes linked with -nodefaultlibs,
+  # without asking the C++ driver to add a second -lc++ to other links.
+  if(COMPILER_RT_HAS_NOSTDLIBXX_FLAG)
+    set(DARWIN_COMMON_LINK_FLAGS -nostdlib++)
+  else()
+    set(DARWIN_COMMON_LINK_FLAGS -stdlib=libc++)
+  endif()
+  list(APPEND DARWIN_COMMON_LINK_FLAGS -lc++ -lc++abi)
 
   llvm_check_compiler_linker_flag(C "-fapplication-extension" COMPILER_RT_HAS_APP_EXTENSION)
   if(COMPILER_RT_HAS_APP_EXTENSION)
