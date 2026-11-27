@@ -1,0 +1,22 @@
+# RUN: split-file %s %t
+# RUN: cmake -E rm -rf "%t/build"
+# RUN: cmake -S "%t" -B "%t/build" -DLLVM_SRC="%llvm_src_root"
+# RUN: cmake --build "%t/build" --target child-configure > %t.log 2>&1
+# RUN: FileCheck %s --implicit-check-not="option is deprecated" \
+# RUN:   --implicit-check-not="Manually-specified variables were not used" < %t.log
+# CHECK: configured child
+
+#--- CMakeLists.txt
+cmake_minimum_required(VERSION 3.20)
+project(external-project-test C)
+list(APPEND CMAKE_MODULE_PATH "${LLVM_SRC}/cmake/modules")
+include(AddLLVM)
+include(LLVMExternalProjectUtils)
+add_executable(llvm-config IMPORTED)
+set_property(TARGET llvm-config PROPERTY IMPORTED_LOCATION "${CMAKE_COMMAND}")
+llvm_ExternalProject_Add(child "${CMAKE_CURRENT_SOURCE_DIR}/child" NO_INSTALL)
+
+#--- child/CMakeLists.txt
+cmake_minimum_required(VERSION 3.20)
+project(child NONE)
+message(STATUS "configured child")

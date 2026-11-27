@@ -393,6 +393,12 @@ function(llvm_ExternalProject_Add name source_dir)
     set(build_command_arg BUILD_COMMAND ${build_cmd})
   endif()
 
+  if(CMAKE_VERSION VERSION_LESS 4.4)
+    set(no_warn_unused_cli --no-warn-unused-cli)
+  else()
+    set(no_warn_unused_cli -Wno-unused-cli)
+  endif()
+
   ExternalProject_Add(${name}
     DEPENDS ${ARG_DEPENDS} llvm-config
     ${name}-clobber
@@ -402,7 +408,7 @@ function(llvm_ExternalProject_Add name source_dir)
     BINARY_DIR ${BINARY_DIR}
     ${exclude}
     CMAKE_ARGS ${${nameCanon}_CMAKE_ARGS}
-               --no-warn-unused-cli
+               ${no_warn_unused_cli}
                ${compiler_args}
                ${verbose}
                -DCMAKE_INSTALL_PREFIX=${CMAKE_INSTALL_PREFIX}
