@@ -28,6 +28,13 @@ if(CMAKE_LIBTOOL)
     if(NOT LIBTOOL_VERSION VERSION_LESS "862")
       set(LIBTOOL_NO_WARNING_FLAG "-no_warning_for_no_symbols")
     endif()
+  else()
+    # llvm-libtool-darwin and newer Apple libtool do not report a cctools-N version.
+    execute_process(COMMAND ${CMAKE_LIBTOOL} -help
+      OUTPUT_VARIABLE LIBTOOL_HELP ERROR_VARIABLE LIBTOOL_HELP)
+    if(LIBTOOL_HELP MATCHES "-no_warning_for_no_symbols")
+      set(LIBTOOL_NO_WARNING_FLAG "-no_warning_for_no_symbols")
+    endif()
   endif()
 
   foreach(lang ${languages})

@@ -1,0 +1,19 @@
+# RUN: split-file %s %t
+# RUN: yaml2obj --docnum=1 %S/no-symbols-warning.test -o %t/empty.o
+# RUN: cmake -DLLVM_SRC="%llvm_src_root" -P "%t/archive.cmake"
+
+#--- archive.cmake
+cmake_minimum_required(VERSION 3.20)
+find_program(CMAKE_LIBTOOL NAMES llvm-libtool-darwin REQUIRED)
+
+function(check_module module)
+  include("${module}")
+  execute_process(COMMAND "${CMAKE_LIBTOOL}" -static -warnings_as_errors ${LIBTOOL_NO_WARNING_FLAG}
+    -o "${CMAKE_CURRENT_LIST_DIR}/empty.a" "${CMAKE_CURRENT_LIST_DIR}/empty.o"
+    COMMAND_ERROR_IS_FATAL ANY)
+endfunction()
+
+check_module("${LLVM_SRC}/cmake/modules/UseLibtool.cmake")
+if(EXISTS "${LLVM_SRC}/../compiler-rt/cmake/Modules/UseLibtool.cmake")
+  check_module("${LLVM_SRC}/../compiler-rt/cmake/Modules/UseLibtool.cmake")
+endif()
