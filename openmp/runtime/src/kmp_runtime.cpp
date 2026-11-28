@@ -6101,7 +6101,19 @@ void __kmp_internal_end_dest(void *specific_gtid) {
   /* NOTE: the gtid is stored as gitd+1 in the thread-local-storage
    * this is because 0 is reserved for the nothing-stored case */
 
+  // POSIX clears the thread-specific value before it calls this destructor, so
+  // the runtime would not find the thread again, where the gtid is found by the
+  // stack address and the destructor runs above every stack address that the
+  // runtime has seen the thread at (__kmp_gtid_mode 1, as on macOS). Everything
+  // that unregistering the root does through the calling thread, such as the
+  // OMPT callbacks of the end of its initial task and whatever the tool asks
+  // the runtime from them, would then not find the thread: the tool would get
+  // uninitialized pointers, as __kmp_reset_root ignores the lookup's failure.
+  // Set the value again for the duration, and clear it, as the destructor would
+  // run again otherwise.
+  __kmp_gtid_set_specific(gtid);
   __kmp_internal_end_thread(gtid);
+  __kmp_gtid_set_specific(-1); // stores 0, which is "nothing stored"
 }
 
 #if KMP_OS_UNIX && KMP_DYNAMIC_LIB

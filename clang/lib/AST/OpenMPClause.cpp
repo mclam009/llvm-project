@@ -2223,7 +2223,9 @@ void OMPClausePrinter::VisitOMPScheduleClause(OMPScheduleClause *Node) {
 
 void OMPClausePrinter::VisitOMPOrderedClause(OMPOrderedClause *Node) {
   OS << "ordered";
-  if (auto *Num = Node->getNumForLoops()) {
+  // The argument that Sema gives an 'ordered' clause of a doacross loop that
+  // has none (OpenMP 5.2) has no parentheses in the source.
+  if (auto *Num = Node->getNumForLoops(); Num && Node->getLParenLoc().isValid()) {
     OS << "(";
     Num->printPretty(OS, nullptr, Policy, 0);
     OS << ")";

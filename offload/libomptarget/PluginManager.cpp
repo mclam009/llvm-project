@@ -597,3 +597,13 @@ Expected<DeviceTy &> PluginManager::getDevice(uint32_t DeviceNo) {
                                        DeviceNo);
   return *DevicePtr;
 }
+
+Expected<DeviceTy &> getDeviceOrError(int DeviceNo) {
+  if (!PM)
+    return error::createOffloadError(
+        error::ErrorCode::INVALID_VALUE,
+        "device number '%i' out of range, no devices available: the program "
+        "has registered no offload image",
+        DeviceNo);
+  return PM->getDevice(DeviceNo);
+}

@@ -41,6 +41,7 @@
 #include "llvm/BinaryFormat/Magic.h"
 #include "llvm/Config/llvm-config.h"
 #include "llvm/Frontend/Debug/Options.h"
+#include "llvm/Frontend/OpenMP/OMP.h"
 #include "llvm/Object/ObjectFile.h"
 #include "llvm/Option/ArgList.h"
 #include "llvm/ProfileData/InstrProfReader.h"
@@ -5136,6 +5137,27 @@ static void ProcessVSRuntimeLibrary(const ToolChain &TC, const ArgList &Args,
     CmdArgs.push_back("--dependent-lib=softintrin");
 }
 
+/// Diagnose an -fopenmp-version that is not one of the OpenMP versions that
+/// clang knows. The frontend would apply the rules of whatever number it is
+/// given while _OPENMP fell back to the default version, so such a program
+/// would be compiled for no version of the specification. Only the decimal
+/// spellings are taken: the frontend reads 061 as an octal number, 49.
+static void checkOpenMPVersion(const Driver &D, const ArgList &Args) {
+  const Arg *A = Args.getLastArg(options::OPT_fopenmp_version_EQ);
+  if (!A)
+    return;
+  ArrayRef<unsigned> Versions = llvm::omp::getOpenMPVersions();
+  StringRef Value = A->getValue();
+  if (llvm::any_of(Versions,
+                   [&](unsigned V) { return Value == std::to_string(V); }))
+    return;
+  std::string Expected;
+  llvm::raw_string_ostream OS(Expected);
+  llvm::interleaveComma(Versions, OS);
+  D.Diag(diag::err_drv_invalid_value_with_suggestion)
+      << A->getAsString(Args) << A->getValue() << Expected;
+}
+
 void Clang::ConstructJob(Compilation &C, const JobAction &JA,
                          const InputInfo &Output, const InputInfoList &Inputs,
                          const ArgList &Args, const char *LinkingOutput) const {
@@ -7074,6 +7096,8 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
       Args.AddLastArg(CmdArgs, options::OPT_fopenmp_simd,
                       options::OPT_fno_openmp_simd);
       Args.AddAllArgs(CmdArgs, options::OPT_fopenmp_enable_irbuilder);
+      if (JA.isDeviceOffloading(Action::OFK_None))
+        checkOpenMPVersion(D, Args);
       Args.AddAllArgs(CmdArgs, options::OPT_fopenmp_version_EQ);
       if (!Args.hasFlag(options::OPT_fopenmp_extensions,
                         options::OPT_fno_openmp_extensions, /*Default=*/true))
@@ -7148,6 +7172,12 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
   } else {
     Args.AddLastArg(CmdArgs, options::OPT_fopenmp_simd,
                     options::OPT_fno_openmp_simd);
+    if (JA.isDeviceOffloading(Action::OFK_None) &&
+        (Args.hasFlag(options::OPT_fopenmp_simd, options::OPT_fno_openmp_simd,
+                      false) ||
+         Args.hasFlag(options::OPT_fopenmp, options::OPT_fopenmp_EQ,
+                      options::OPT_fno_openmp, false)))
+      checkOpenMPVersion(D, Args);
     Args.AddAllArgs(CmdArgs, options::OPT_fopenmp_version_EQ);
     Args.addOptOutFlag(CmdArgs, options::OPT_fopenmp_extensions,
                        options::OPT_fno_openmp_extensions);

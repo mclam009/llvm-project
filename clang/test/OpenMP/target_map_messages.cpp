@@ -172,33 +172,33 @@ struct SA {
     {}
     // ge60-error@+4 {{incorrect map type modifier, expected one of: 'always', 'close', 'mapper', 'present', 'iterator', 'self}}
     // ge52-error@+3 {{incorrect map type modifier, expected one of: 'always', 'close', 'mapper', 'present', 'iterator'}}
-    // ge51-omp-error@+2 {{incorrect map type modifier, expected one of: 'always', 'close', 'mapper', 'present'}}
+    // ge51-omp-error@+2 {{incorrect map type modifier, expected one of: 'always', 'close', 'mapper', 'present', 'iterator'}}
     // lt51-omp-error@+1 {{incorrect map type modifier, expected one of: 'always', 'close', 'mapper'}}
     #pragma omp target map(ompx_hold, tofrom: c,f)
     {}
     // ge60-error@+4 {{incorrect map type modifier, expected one of: 'always', 'close', 'mapper', 'present', 'iterator', 'self}}
     // ge52-error@+3 {{incorrect map type modifier, expected one of: 'always', 'close', 'mapper', 'present', 'iterator'}}
-    // ge51-omp-error@+2 {{incorrect map type modifier, expected one of: 'always', 'close', 'mapper', 'present'}}
+    // ge51-omp-error@+2 {{incorrect map type modifier, expected one of: 'always', 'close', 'mapper', 'present', 'iterator'}}
     // lt51-omp-error@+1 {{incorrect map type modifier, expected one of: 'always', 'close', 'mapper'}}
     #pragma omp target map(ompx_hold, tofrom: c[1:2],f)
     {}
     // ge60-error@+4 {{incorrect map type modifier, expected one of: 'always', 'close', 'mapper', 'present', 'iterator', 'self}}
     // ge52-error@+3 {{incorrect map type modifier, expected one of: 'always', 'close', 'mapper', 'present', 'iterator'}}
-    // ge51-omp-error@+2 {{incorrect map type modifier, expected one of: 'always', 'close', 'mapper', 'present'}}
+    // ge51-omp-error@+2 {{incorrect map type modifier, expected one of: 'always', 'close', 'mapper', 'present', 'iterator'}}
     // lt51-omp-error@+1 {{incorrect map type modifier, expected one of: 'always', 'close', 'mapper'}}
     #pragma omp target map(ompx_hold, tofrom: c,f[1:2])
     {}
     // ge60-error@+5 {{incorrect map type modifier, expected one of: 'always', 'close', 'mapper', 'present', 'iterator', 'self}}
     // ge52-error@+4 {{incorrect map type modifier, expected one of: 'always', 'close', 'mapper', 'present', 'iterator'}}
     // lt60-error@+3 {{section length is unspecified and cannot be inferred because subscripted value is not an array}}
-    // ge51-omp-error@+2 {{incorrect map type modifier, expected one of: 'always', 'close', 'mapper', 'present'}}
+    // ge51-omp-error@+2 {{incorrect map type modifier, expected one of: 'always', 'close', 'mapper', 'present', 'iterator'}}
     // lt51-omp-error@+1 {{incorrect map type modifier, expected one of: 'always', 'close', 'mapper'}}
     #pragma omp target map(ompx_hold, tofrom: c[:],f)
     {}
     // ge60-error@+5 {{incorrect map type modifier, expected one of: 'always', 'close', 'mapper', 'present', 'iterator', 'self}}
     // ge52-error@+4 {{incorrect map type modifier, expected one of: 'always', 'close', 'mapper', 'present', 'iterator'}}
     // lt60-error@+3 {{section length is unspecified and cannot be inferred because subscripted value is not an array}}
-    // ge51-omp-error@+2 {{incorrect map type modifier, expected one of: 'always', 'close', 'mapper', 'present'}}
+    // ge51-omp-error@+2 {{incorrect map type modifier, expected one of: 'always', 'close', 'mapper', 'present', 'iterator'}}
     // lt51-omp-error@+1 {{incorrect map type modifier, expected one of: 'always', 'close', 'mapper'}}
     #pragma omp target map(ompx_hold, tofrom: c,f[:])
     {}
@@ -219,7 +219,7 @@ struct SA {
     // ge60-error@+5 2 {{incorrect map type modifier, expected one of: 'always', 'close', 'mapper', 'present', 'iterator', 'self}}
     // ge52-error@+4 2 {{incorrect map type modifier, expected one of: 'always', 'close', 'mapper', 'present', 'iterator'}}
     // ompx-error@+3 {{same map type modifier has been specified more than once}}
-    // ge51-omp-error@+2 2 {{incorrect map type modifier, expected one of: 'always', 'close', 'mapper', 'present'}}
+    // ge51-omp-error@+2 2 {{incorrect map type modifier, expected one of: 'always', 'close', 'mapper', 'present', 'iterator'}}
     // lt51-omp-error@+1 2 {{incorrect map type modifier, expected one of: 'always', 'close', 'mapper'}}
     #pragma omp target map(ompx_hold, ompx_hold, tofrom: a)
     {}
@@ -231,7 +231,7 @@ struct SA {
     // lt51-ompx-error@+5 2 {{incorrect map type modifier, expected one of: 'always', 'close', 'mapper', 'ompx_hold'}}
     // lt51-omp-error@+4 2 {{incorrect map type modifier, expected one of: 'always', 'close', 'mapper'}}
     // ompx-error@+3 {{same map type modifier has been specified more than once}}
-    // ge51-omp-error@+2 2 {{incorrect map type modifier, expected one of: 'always', 'close', 'mapper', 'present'}}
+    // ge51-omp-error@+2 2 {{incorrect map type modifier, expected one of: 'always', 'close', 'mapper', 'present', 'iterator'}}
     // lt51-omp-error@+1 2 {{incorrect map type modifier, expected one of: 'always', 'close', 'mapper'}}
     #pragma omp target map(always, close, present, ompx_hold, always, close, present, ompx_hold, tofrom: a)
     {}
@@ -283,36 +283,39 @@ struct SA {
     {}
     #pragma omp target map(([b[I]][bf])f)  // lt50-error {{expected ',' or ']' in lambda capture list}} lt50-error {{expected ')'}} lt50-note {{to match this '('}}
     {}
-    // ge51-ompx-error@+4 {{incorrect map type modifier, expected one of: 'always', 'close', 'mapper', 'present', 'ompx_hold'}}
-    // lt51-ompx-error@+3 {{incorrect map type modifier, expected one of: 'always', 'close', 'mapper', 'ompx_hold'}}
-    // ge51-omp-error@+2 {{incorrect map type modifier, expected one of: 'always', 'close', 'mapper', 'present'}}
+    // lt51-ompx-error@+2 {{incorrect map type modifier, expected one of: 'always', 'close', 'mapper', 'ompx_hold'}}
     // lt51-omp-error@+1 {{incorrect map type modifier, expected one of: 'always', 'close', 'mapper'}}
     #pragma omp target map(iterator(it=0:10), tofrom:a)
     {}
-    // ompx-error@+8 {{redefinition of 'it'}}
-    // ompx-note@+7 {{previous definition is here}}
-    // omp-error@+6 {{redefinition of 'it'}}
-    // omp-note@+5 {{previous definition is here}}
-    // ge51-ompx-error@+4 {{incorrect map type modifier, expected one of: 'always', 'close', 'mapper', 'present', 'ompx_hold'}}
-    // lt51-ompx-error@+3 {{incorrect map type modifier, expected one of: 'always', 'close', 'mapper', 'ompx_hold'}}
-    // ge51-omp-error@+2 {{incorrect map type modifier, expected one of: 'always', 'close', 'mapper', 'present'}}
+    // ompx-error@+6 {{redefinition of 'it'}}
+    // ompx-note@+5 {{previous definition is here}}
+    // omp-error@+4 {{redefinition of 'it'}}
+    // omp-note@+3 {{previous definition is here}}
+    // lt51-ompx-error@+2 {{incorrect map type modifier, expected one of: 'always', 'close', 'mapper', 'ompx_hold'}}
     // lt51-omp-error@+1 {{incorrect map type modifier, expected one of: 'always', 'close', 'mapper'}}
     #pragma omp target map(iterator(it=0:10, it=0:20), tofrom:a)
     {}
-    // ge60-error@+7 {{expected '(' after 'iterator'}}
-    // ge51-ompx-error@+6 {{incorrect map type modifier, expected one of: 'always', 'close', 'mapper', 'present', 'ompx_hold'}}
-    // lt51-ompx-error@+5 {{incorrect map type modifier, expected one of: 'always', 'close', 'mapper', 'ompx_hold'}}
-    // lt51-error@+4 {{expected '(' after 'iterator'}}
-    // ge51-error@+3 {{expected '(' after 'iterator'}}
-    // ge51-omp-error@+2 {{incorrect map type modifier, expected one of: 'always', 'close', 'mapper', 'present'}}
+    // ge60-error@+5 {{expected '(' after 'iterator'}}
+    // lt51-ompx-error@+4 {{incorrect map type modifier, expected one of: 'always', 'close', 'mapper', 'ompx_hold'}}
+    // lt51-error@+3 {{expected '(' after 'iterator'}}
+    // ge51-error@+2 {{expected '(' after 'iterator'}}
     // lt51-omp-error@+1 {{incorrect map type modifier, expected one of: 'always', 'close', 'mapper'}}
     #pragma omp target map(iterator, tofrom:a)
     {}
-    // ge51-ompx-error@+4 {{incorrect map type modifier, expected one of: 'always', 'close', 'mapper', 'present', 'ompx_hold'}}
-    // lt51-ompx-error@+3 {{incorrect map type modifier, expected one of: 'always', 'close', 'mapper', 'ompx_hold'}}
-    // ge51-omp-error@+2 {{incorrect map type modifier, expected one of: 'always', 'close', 'mapper', 'present'}}
+    // lt51-ompx-error@+2 {{incorrect map type modifier, expected one of: 'always', 'close', 'mapper', 'ompx_hold'}}
     // lt51-omp-error@+1 {{incorrect map type modifier, expected one of: 'always', 'close', 'mapper'}}
     #pragma omp target map(iterator(), tofrom:a)
+    {}
+    // The modifiers may be in any order.
+    // lt51-ompx-error@+2 {{incorrect map type modifier, expected one of: 'always', 'close', 'mapper', 'ompx_hold'}}
+    // lt51-omp-error@+1 {{incorrect map type modifier, expected one of: 'always', 'close', 'mapper'}}
+    #pragma omp target map(always, iterator(it=0:10), close, tofrom:a)
+    {}
+    // lt51-ompx-error@+4 2 {{incorrect map type modifier, expected one of: 'always', 'close', 'mapper', 'ompx_hold'}}
+    // lt51-omp-error@+3 2 {{incorrect map type modifier, expected one of: 'always', 'close', 'mapper'}}
+    // ge51-error@+2 {{same map type modifier has been specified more than once}}
+    // ge60-error@+1 {{same map type modifier has been specified more than once}}
+    #pragma omp target map(iterator(it=0:10), always, iterator(jt=0:10), tofrom:a)
     {}
     return;
   }
@@ -1003,20 +1006,16 @@ int main(int argc, char **argv) {
     pos(i).y = i+1;
   }
 
-  // ge51-ompx-error@+4 {{incorrect map type modifier, expected one of: 'always', 'close', 'mapper', 'present', 'ompx_hold'}}
-  // lt51-ompx-error@+3 {{incorrect map type modifier, expected one of: 'always', 'close', 'mapper', 'ompx_hold'}}
-  // ge51-omp-error@+2 {{incorrect map type modifier, expected one of: 'always', 'close', 'mapper', 'present'}}
+  // lt51-ompx-error@+2 {{incorrect map type modifier, expected one of: 'always', 'close', 'mapper', 'ompx_hold'}}
   // lt51-omp-error@+1 {{incorrect map type modifier, expected one of: 'always', 'close', 'mapper'}}
   #pragma omp target map(iterator(it=0:10), tofrom:a[it])
   {}
 
-  // ompx-error@+8 {{use of undeclared identifier 'itt'; did you mean 'it'?}}
-  // ompx-note@+7 {{'it' declared here}}
-  // omp-error@+6 {{use of undeclared identifier 'itt'; did you mean 'it'?}}
-  // omp-note@+5 {{'it' declared here}}
-  // ge51-ompx-error@+4 {{incorrect map type modifier, expected one of: 'always', 'close', 'mapper', 'present', 'ompx_hold'}}
-  // lt51-ompx-error@+3 {{incorrect map type modifier, expected one of: 'always', 'close', 'mapper', 'ompx_hold'}}
-  // ge51-omp-error@+2 {{incorrect map type modifier, expected one of: 'always', 'close', 'mapper', 'present'}}
+  // ompx-error@+6 {{use of undeclared identifier 'itt'; did you mean 'it'?}}
+  // ompx-note@+5 {{'it' declared here}}
+  // omp-error@+4 {{use of undeclared identifier 'itt'; did you mean 'it'?}}
+  // omp-note@+3 {{'it' declared here}}
+  // lt51-ompx-error@+2 {{incorrect map type modifier, expected one of: 'always', 'close', 'mapper', 'ompx_hold'}}
   // lt51-omp-error@+1 {{incorrect map type modifier, expected one of: 'always', 'close', 'mapper'}}
   #pragma omp target map(iterator(it=0:10), tofrom:a[itt])
   {}

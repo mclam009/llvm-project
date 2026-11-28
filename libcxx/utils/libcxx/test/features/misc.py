@@ -67,6 +67,20 @@ features = [
         when=lambda cfg: hasCompileFlag(cfg, "-fconstexpr-ops-limit=1"),
     ),
     Feature(name="has-fblocks", when=lambda cfg: hasCompileFlag(cfg, "-fblocks")),
+    # Whether a program that includes <omp.h> builds and links with -fopenmp. The tests of the OpenMP backend of the
+    # parallel algorithms (libcxx/test/libcxx/algorithms/pstl.openmp.*) need it, and select the backend with
+    # // ADDITIONAL_COMPILE_FLAGS: -fopenmp -D_LIBCPP_PSTL_BACKEND_OPENMP
+    Feature(
+        name="has-fopenmp",
+        when=lambda cfg: sourceBuilds(
+            cfg,
+            """
+            #include <omp.h>
+            int main(int, char**) { return omp_get_max_threads() > 0 ? 0 : 1; }
+            """,
+            ["-fopenmp"],
+        ),
+    ),
     Feature(
         name="fdelayed-template-parsing",
         when=lambda cfg: hasCompileFlag(cfg, "-fdelayed-template-parsing"),

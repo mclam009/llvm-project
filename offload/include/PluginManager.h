@@ -189,7 +189,15 @@ void initRuntime();
 /// Deinitialize the plugin and delete it.
 void deinitRuntime();
 
+/// The plugin manager. initRuntime() creates it when a program registers its
+/// first offload image (__tgt_register_lib); until then, and in a program that
+/// has no offload image, it is null and there are no devices, and the OpenMP
+/// API routines act on the initial device only.
 extern PluginManager *PM;
+
+/// PM->getDevice(DeviceNo), or an error if there is no plugin manager.
+llvm::Expected<DeviceTy &> getDeviceOrError(int DeviceNo);
+
 extern std::atomic<bool> RTLAlive; // Indicates if the RTL has been initialized
 extern std::atomic<int> RTLOngoingSyncs; // Counts ongoing external syncs
 #endif // OMPTARGET_PLUGIN_MANAGER_H
