@@ -1,0 +1,19 @@
+# REQUIRES: system-darwin
+# RUN: split-file %s %t
+# RUN: chmod +x "%t/xcrun"
+# RUN: cmake -E rm -rf "%t/build"
+# RUN: cmake -S "%llvm_src_root" -B "%t/build" -DCMAKE_XCRUN="%t/xcrun" \
+# RUN:   -DCMAKE_C_COMPILER=/usr/bin/clang -DCMAKE_CXX_COMPILER=/usr/bin/clang++ \
+# RUN:   -DCMAKE_BUILD_TYPE=Release -DLLVM_TARGETS_TO_BUILD=Native \
+# RUN:   -DLLVM_INCLUDE_TESTS=OFF -DLLVM_INCLUDE_BENCHMARKS=OFF > "%t/log" 2>&1
+# RUN: FileCheck %s --implicit-check-not="no classic linker" --implicit-check-not=CMP0219 < "%t/log"
+# CHECK: Found ld64 - {{.+}}/ld{{$}}
+# CHECK: Performing Test C_WCOMMENT_ALLOWS_LINE_WRAP - Success
+
+#--- xcrun
+#!/bin/sh
+if [ "$1" = -find ] && [ "$2" = ld-classic ]; then
+  echo "no classic linker" >&2
+  exit 1
+fi
+exec /usr/bin/xcrun "$@"
