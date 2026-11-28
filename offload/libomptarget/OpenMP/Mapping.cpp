@@ -255,7 +255,7 @@ TargetPointerResultTy MappingInfoTy::getTargetPointer(
     MESSAGE("explicit extension not allowed: host address specified is " DPxMOD
             " (%" PRId64
             " bytes), but device allocation maps to host at " DPxMOD
-            " (%" PRId64 " bytes)",
+            " (%" PRIuPTR " bytes)",
             DPxPTR(HstPtrBegin), Size, DPxPTR(LR.TPR.getEntry()->HstPtrBegin),
             LR.TPR.getEntry()->HstPtrEnd - LR.TPR.getEntry()->HstPtrBegin);
     if (HasPresentModifier)
@@ -307,8 +307,8 @@ TargetPointerResultTy MappingInfoTy::getTargetPointer(
     INFO(OMP_INFOTYPE_MAPPING_CHANGED, Device.DeviceID,
          "Creating new map entry with HstPtrBase=" DPxMOD
          ", HstPtrBegin=" DPxMOD ", TgtAllocBegin=" DPxMOD
-         ", TgtPtrBegin=" DPxMOD
-         ", Size=%ld, DynRefCount=%s, HoldRefCount=%s, Name=%s\n",
+         ", TgtPtrBegin=" DPxMOD ", Size=%" PRId64
+         ", DynRefCount=%s, HoldRefCount=%s, Name=%s\n",
          DPxPTR(HstPtrBase), DPxPTR(HstPtrBegin), DPxPTR(TgtAllocBegin),
          DPxPTR(TgtPtrBegin), Size,
          LR.TPR.getEntry()->dynRefCountToStr().c_str(),

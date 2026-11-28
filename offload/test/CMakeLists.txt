@@ -27,6 +27,20 @@ if(TARGET omp)
   set(OMP_DEPEND omp)
 endif()
 
+# The Darwin build checks (darwin/) compile runtime sources with the flags and
+# include directories of their own build.
+set(OFFLOAD_DARWIN_BUILD_RSP "")
+if(APPLE AND CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+  set(OFFLOAD_DARWIN_BUILD_RSP "${CMAKE_CURRENT_BINARY_DIR}/darwin-build.rsp")
+  set(offload_darwin_includes
+      "$<TARGET_PROPERTY:omptarget,INCLUDE_DIRECTORIES>"
+      "$<TARGET_PROPERTY:PluginCommon,INCLUDE_DIRECTORIES>")
+  set(offload_darwin_includes
+      "$<REMOVE_DUPLICATES:${offload_darwin_includes}>")
+  file(GENERATE OUTPUT "${OFFLOAD_DARWIN_BUILD_RSP}" CONTENT
+    "${CMAKE_CXX_FLAGS}\n-I\"$<JOIN:${offload_darwin_includes},\"\n-I\">\"\n")
+endif()
+
 string(REGEX MATCHALL "([^\ ]+\ |[^\ ]+$)" SYSTEM_TARGETS "${LIBOMPTARGET_SYSTEM_TARGETS}")
 foreach(CURRENT_TARGET IN LISTS SYSTEM_TARGETS)
   string(STRIP "${CURRENT_TARGET}" CURRENT_TARGET)

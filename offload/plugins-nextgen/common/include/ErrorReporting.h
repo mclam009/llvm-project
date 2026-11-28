@@ -22,6 +22,7 @@
 #include "llvm/Support/WithColor.h"
 #include "llvm/Support/raw_ostream.h"
 
+#include <cinttypes>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -165,13 +166,13 @@ class ErrorReporter {
 
     if (ATI->HostPtr)
       print(BoldLightPurple,
-            "Last allocation of size %lu for host pointer %p -> device pointer "
-            "%p:\n",
+            "Last allocation of size %" PRIu64
+            " for host pointer %p -> device pointer %p:\n",
             ATI->Size, ATI->HostPtr, ATI->DevicePtr);
     else
       print(BoldLightPurple,
-            "Last allocation of size %lu -> device pointer %p:\n", ATI->Size,
-            ATI->DevicePtr);
+            "Last allocation of size %" PRIu64 " -> device pointer %p:\n",
+            ATI->Size, ATI->DevicePtr);
     reportStackTrace(ATI->AllocationTrace);
     if (!ATI->LastAllocationInfo)
       return;
@@ -181,8 +182,8 @@ class ErrorReporter {
     while (ATI->LastAllocationInfo) {
       print("\n");
       ATI = ATI->LastAllocationInfo;
-      print(BoldLightPurple, " #%u Prior deallocation of size %lu:\n", I,
-            ATI->Size);
+      print(BoldLightPurple, " #%u Prior deallocation of size %" PRIu64 ":\n",
+            I, ATI->Size);
       reportStackTrace(ATI->DeallocationTrace);
       if (ATI->HostPtr)
         print(
